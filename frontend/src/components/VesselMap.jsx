@@ -40,8 +40,10 @@ export default function VesselMap({ vessels = [], height = '400px' }) {
                 attributionControl={true}
             >
                 <TileLayer
-                    url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                    attribution='&copy; <a href="https://carto.com/">CARTO</a>'
+                    url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
+                    attribution='&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://osm.org/copyright">OSM</a>'
+                    maxZoom={19}
+                    subdomains="abcd"
                 />
                 <MapBounds vessels={vessels} />
                 {vessels.map((v, i) => (
