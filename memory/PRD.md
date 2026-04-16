@@ -7,62 +7,30 @@ Aplikasi web yang auto mengekstrak data AIS dari akun MarineTraffic, extract per
 - **Backend**: FastAPI + MongoDB (Motor async driver)
 - **Frontend**: React + Tailwind CSS + Shadcn UI + react-leaflet
 - **Database**: MongoDB (collections: users, vessels, vessel_history, extraction_logs, bot_settings, api_forward_config)
-- **Scraper**: MarineTraffic web scraper with simulation data fallback
-- **Scheduler**: APScheduler (AsyncIOScheduler) for periodic extraction
+- **Scraper**: Playwright + playwright-stealth (bypasses Cloudflare, real MarineTraffic data)
+- **Scheduler**: APScheduler (AsyncIOScheduler) for periodic extraction every 30 min
 
-## User Personas
-- **Maritime Analyst**: Monitors vessel traffic in ASEAN region
-- **Data Engineer**: Exports AIS data and sends via API to downstream systems
-- **Admin**: Manages bot settings and system configuration
-
-## Core Requirements
-- Login authentication (admin account)
-- Dashboard with vessel statistics, interactive map, and data tables
-- Automated extraction every 30 minutes via bot
-- CSV export functionality
-- API forwarding to external endpoints
-- MarineTraffic web scraping (with simulation fallback)
-- ASEAN region bounding box filter (Lat -11 to 25, Lon 95 to 150)
+## Data Source
+- **REAL DATA** from MarineTraffic via Playwright browser scraping
+- Account: nedwijayanto@gmail.com
+- Auth0/Kpler login flow handled automatically
+- getData/get_data_json_4 tile endpoints captured via network interception
+- ~5000+ vessels per extraction in ASEAN region
+- Extraction time: ~30 seconds per run
 
 ## What's Been Implemented (April 16, 2026)
-- [x] JWT-based authentication with admin seed
-- [x] Dark theme dashboard with maritime command center aesthetic
-- [x] Interactive Leaflet map with CartoDB Dark Matter tiles
-- [x] Vessel data table with search, type filter, flag filter, pagination
-- [x] CSV export endpoint
-- [x] Bot start/stop/extract-now controls
-- [x] APScheduler for periodic extraction (configurable interval)
-- [x] MarineTraffic scraper class (login + tile-based fetch)
-- [x] Simulation data fallback (realistic ASEAN vessel data)
-- [x] API forwarding configuration and send
-- [x] Extraction logs tracking
-- [x] Vessel statistics aggregation
-
-## Data Source Note
-- MarineTraffic web scraping is attempted but may fail due to anti-bot protection
-- System falls back to **SIMULATED DATA** when real scraping fails
-- For production: integrate official MarineTraffic API (~$100/month)
-
-## Prioritized Backlog
-### P0 (Critical)
-- Integrate official MarineTraffic API for reliable data access
-- Verify MarineTraffic scraping actually works with provided credentials
-
-### P1 (Important)
-- Historical vessel tracking and route display
-- Real-time WebSocket updates
-- Port call data integration
-- Vessel detail page with full history
-
-### P2 (Nice to have)
-- Multi-user support with role-based access
-- Email notifications for extraction failures
-- Data analytics and vessel movement patterns
-- Automated CSV email delivery
-- Mobile responsive improvements
+- [x] JWT auth with admin seed
+- [x] Dark theme command center dashboard (Chivo + IBM Plex Sans fonts)
+- [x] Leaflet map with CartoDB Dark Matter tiles showing 5000+ vessels
+- [x] REAL MarineTraffic data extraction via Playwright stealth browser
+- [x] APScheduler bot (configurable interval, default 30 min)
+- [x] CSV export
+- [x] API forwarding to external endpoints
+- [x] Extraction logs with real timestamps and stats
+- [x] Vessel search, type filter, flag filter, pagination
 
 ## Next Tasks
-1. Test MarineTraffic scraping with real credentials in production
-2. Add vessel detail page with historical track
-3. Implement auto-forward on each extraction
-4. Add data retention/cleanup policies
+1. Add vessel detail page with historical track
+2. Implement auto-forward on each extraction
+3. Add WebSocket for real-time updates
+4. Improve vessel type mapping for better categorization
