@@ -275,14 +275,15 @@ export default function SettingsPage() {
 
             {/* MarineTraffic Info */}
             <div className="bg-[#0F1621] border border-[#1E293B] rounded-md p-6">
-                <h2 className="text-lg font-bold text-[#F8FAFC] mb-3" style={{ fontFamily: 'Chivo, sans-serif' }}>
-                    Data Source Info
+                <h2 className="text-lg font-bold text-[#F8FAFC] mb-3 flex items-center gap-2" style={{ fontFamily: 'Chivo, sans-serif' }}>
+                    <Wifi className="w-5 h-5 text-[#10B981]" />
+                    Data Source: MarineTraffic (Real Data)
                 </h2>
                 <div className="space-y-2 text-sm text-[#94A3B8]">
-                    <p>The bot attempts to scrape vessel data from MarineTraffic for the ASEAN region.</p>
-                    <p>If scraping fails (due to anti-bot protection), the system falls back to <strong className="text-[#F59E0B]">simulated data</strong> for demonstration.</p>
-                    <p>Bounding box: <span className="font-mono text-[#F8FAFC]">Lat -11.0 to 25.0, Lon 95.0 to 150.0</span></p>
-                    <p>For production use, consider using the official <a href="https://www.marinetraffic.com/en/p/api-services" target="_blank" rel="noopener noreferrer" className="text-[#00A6FB] hover:underline">MarineTraffic API</a>.</p>
+                    <p>Bot menggunakan <strong className="text-[#10B981]">data real dari MarineTraffic</strong> melalui browser scraping.</p>
+                    <p>Data diekstrak langsung dari peta MarineTraffic menggunakan akun Anda.</p>
+                    <p>Bounding box ASEAN: <span className="font-mono text-[#F8FAFC]">Lat -11.0 to 25.0, Lon 95.0 to 150.0</span></p>
+                    <p>Waktu ekstraksi: ~20-30 detik per sesi (menggunakan headless browser).</p>
                 </div>
             </div>
         </div>

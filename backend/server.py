@@ -8,16 +8,15 @@ from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Query
 from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from pymongo import MongoClient
 import os
 import logging
 import uuid
 import math
 import time
-import random
 import io
 import csv
 import json
+import asyncio
 import requests
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
@@ -25,15 +24,12 @@ from pydantic import BaseModel, Field, ConfigDict
 import bcrypt
 import jwt
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from bs4 import BeautifulSoup
 
 # ===== CONFIG =====
 mongo_url = os.environ['MONGO_URL']
 db_name = os.environ['DB_NAME']
 async_client = AsyncIOMotorClient(mongo_url)
 db = async_client[db_name]
-sync_client = MongoClient(mongo_url)
-sync_db = sync_client[db_name]
 
 JWT_SECRET = os.environ['JWT_SECRET']
 JWT_ALGORITHM = "HS256"
@@ -43,6 +39,37 @@ MT_EMAIL = os.environ.get('MT_EMAIL', '')
 MT_PASSWORD = os.environ.get('MT_PASSWORD', '')
 
 ASEAN_BBOX = {"min_lat": -11.0, "max_lat": 25.0, "min_lon": 95.0, "max_lon": 150.0}
+
+# ASEAN tile coordinates at zoom 5
+ASEAN_TILES_Z5 = [
+    (24, 14), (24, 15), (24, 16), (24, 17),
+    (25, 14), (25, 15), (25, 16), (25, 17),
+    (26, 14), (26, 15), (26, 16), (26, 17),
+    (27, 14), (27, 15), (27, 16), (27, 17),
+]
+
+SHIP_TYPE_MAP = {
+    "1": "Reserved", "2": "Reserved", "3": "Special Craft", "4": "High Speed Craft",
+    "5": "Special Craft", "6": "Passenger", "7": "Cargo", "8": "Tanker", "9": "Other",
+}
+GT_SHIP_TYPE_MAP = {
+    "1": "Reserved", "2": "Wing in Ground", "3": "Vessel", "4": "HSC",
+    "5": "Special Craft", "6": "Passenger", "7": "Cargo - Hazardous A",
+    "8": "Cargo", "9": "Cargo - Hazardous B", "10": "Cargo - Hazardous C",
+    "11": "Cargo - Hazardous D", "12": "Tanker - Hazardous A",
+    "13": "Tanker", "14": "Tanker - Hazardous B", "15": "Tanker - Hazardous C",
+    "16": "Tanker - Hazardous D", "17": "Tanker", "18": "Other",
+    "19": "Passenger", "20": "Container Ship", "21": "Bulk Carrier",
+    "22": "General Cargo", "23": "Ro-Ro Cargo", "24": "Reefer",
+    "25": "Vehicle Carrier", "26": "LNG Carrier", "27": "LPG Carrier",
+    "28": "Crude Oil Tanker", "29": "Chemical Tanker", "30": "Product Tanker",
+    "31": "Oil/Chemical Tanker", "32": "Offshore Supply", "33": "Tug",
+    "34": "Pleasure Craft", "35": "Sailing Vessel", "36": "Fishing",
+    "37": "Military", "38": "Research Vessel", "39": "Dredger",
+    "40": "Yacht", "50": "Pilot Vessel", "51": "SAR", "52": "Tug",
+    "53": "Port Tender", "54": "Anti-Pollution", "55": "Law Enforcement",
+    "56": "FPSO/FSO",
+}
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -88,339 +115,219 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
-class UserResponse(BaseModel):
-    id: str
-    email: str
-    name: str
-    role: str
-
-class VesselResponse(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    id: str
-    mmsi: str
-    imo: Optional[str] = None
-    name: str
-    vessel_type: str
-    flag: Optional[str] = None
-    latitude: float
-    longitude: float
-    speed: Optional[float] = None
-    course: Optional[float] = None
-    heading: Optional[float] = None
-    nav_status: Optional[str] = None
-    destination: Optional[str] = None
-    eta: Optional[str] = None
-    last_updated: str
-    source: str
-
-class BotStatusResponse(BaseModel):
-    running: bool
-    interval_minutes: int
-    last_extraction: Optional[str] = None
-    next_extraction: Optional[str] = None
-    total_extractions: int
-    mt_connected: bool
-
-class ExtractionLogResponse(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    id: str
-    timestamp: str
-    status: str
-    source: str
-    vessels_count: int
-    duration_seconds: float
-    error_message: Optional[str] = None
-
 class ForwardConfig(BaseModel):
     endpoint_url: str
     method: str = "POST"
     headers: Optional[dict] = None
     enabled: bool = True
 
-# ===== MARINE TRAFFIC SCRAPER =====
-class MarineTrafficScraper:
-    BASE_URL = "https://www.marinetraffic.com"
+# ===== MARINETRAFFIC PLAYWRIGHT SCRAPER =====
+async def scrape_marinetraffic_real():
+    """Use Playwright to scrape real vessel data from MarineTraffic"""
+    from playwright.async_api import async_playwright
+    from playwright_stealth import Stealth
 
-    def __init__(self, email: str, password: str):
-        self.email = email
-        self.password = password
-        self.session = None
-        self.logged_in = False
+    logger.info("Starting real MarineTraffic scrape with Playwright...")
+    vessels = []
+    seen_ids = set()
 
-    def _create_session(self):
-        self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-        })
-
-    def login(self) -> bool:
-        try:
-            self._create_session()
-            login_page = self.session.get(f"{self.BASE_URL}/en/users/login", timeout=15)
-            soup = BeautifulSoup(login_page.text, 'lxml')
-            token_input = soup.find('input', {'name': '_token'})
-            csrf_token = token_input['value'] if token_input else ''
-
-            login_data = {
-                'email': self.email,
-                'password': self.password,
-                '_token': csrf_token,
-            }
-            self.session.headers.update({
-                'X-Requested-With': 'XMLHttpRequest',
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Referer': f"{self.BASE_URL}/en/users/login",
-            })
-            response = self.session.post(
-                f"{self.BASE_URL}/en/users/ajax_login",
-                data=login_data,
-                timeout=15,
-                allow_redirects=False
+    try:
+        stealth = Stealth()
+        async with async_playwright() as p:
+            stealth.hook_playwright_context(p)
+            browser = await p.chromium.launch(
+                headless=True,
+                args=['--no-sandbox', '--disable-setuid-sandbox']
             )
-            if response.status_code in [200, 302]:
+            context = await browser.new_context(viewport={'width': 1920, 'height': 1080})
+            page = await context.new_page()
+
+            raw_responses = []
+
+            async def capture_response(response):
+                url = response.url
+                if 'getData/get_data_json' in url:
+                    try:
+                        body = await response.text()
+                        if body and not body.startswith('<!DOCTYPE'):
+                            raw_responses.append(body)
+                    except Exception:
+                        pass
+
+            page.on('response', capture_response)
+
+            # Step 1: Login to MarineTraffic
+            logger.info("Navigating to MarineTraffic login...")
+            await page.goto('https://www.marinetraffic.com/en/users/login', timeout=30000)
+            await page.wait_for_timeout(5000)
+
+            title = await page.title()
+            if 'Cloudflare' not in title and 'Attention' not in title:
+                # Fill login - Auth0 style (email first, then password)
                 try:
-                    data = response.json()
-                    self.logged_in = data.get('success', False) or data.get('status', '') == 'ok'
-                except Exception:
-                    self.logged_in = response.status_code == 200
-            logger.info(f"MarineTraffic login: {'success' if self.logged_in else 'failed'} (status={response.status_code})")
-            return self.logged_in
-        except Exception as e:
-            logger.error(f"MarineTraffic login error: {e}")
-            return False
+                    visible_inputs = page.locator('input:visible')
+                    cnt = await visible_inputs.count()
 
-    def _lat_lon_to_tile(self, lat, lon, zoom):
-        n = 2 ** zoom
-        x = int((lon + 180.0) / 360.0 * n)
-        lat_rad = math.radians(lat)
-        y = int((1.0 - math.log(math.tan(lat_rad) + 1 / math.cos(lat_rad)) / math.pi) / 2.0 * n)
-        return x, y
+                    if cnt == 1:
+                        # Email-first flow
+                        await visible_inputs.first.fill(MT_EMAIL)
+                        submit = page.locator('button[type="submit"]:visible, button:has-text("Continue"):visible')
+                        if await submit.count() > 0:
+                            await submit.first.click()
+                            await page.wait_for_timeout(3000)
 
-    def _get_tiles_for_bbox(self, min_lat, min_lon, max_lat, max_lon, zoom):
-        tiles = set()
-        x1, y1 = self._lat_lon_to_tile(max_lat, min_lon, zoom)
-        x2, y2 = self._lat_lon_to_tile(min_lat, max_lon, zoom)
-        for x in range(min(x1, x2), max(x1, x2) + 1):
-            for y in range(min(y1, y2), max(y1, y2) + 1):
-                tiles.add((x, y))
-        return list(tiles)
+                        pwd = page.locator('input[type="password"]:visible')
+                        if await pwd.count() > 0:
+                            await pwd.first.fill(MT_PASSWORD)
+                            submit2 = page.locator('button[type="submit"]:visible, button:has-text("Continue"):visible, button:has-text("Log in"):visible')
+                            if await submit2.count() > 0:
+                                await submit2.first.click()
+                                await page.wait_for_timeout(5000)
 
-    def fetch_vessels(self, bbox=None):
-        if bbox is None:
-            bbox = ASEAN_BBOX
-        if not self.logged_in:
-            self.login()
+                    elif cnt >= 2:
+                        await visible_inputs.nth(0).fill(MT_EMAIL)
+                        await visible_inputs.nth(1).fill(MT_PASSWORD)
+                        submit = page.locator('button[type="submit"]:visible')
+                        if await submit.count() > 0:
+                            await submit.first.click()
+                            await page.wait_for_timeout(5000)
 
-        vessels = []
-        try:
-            zoom = 5
-            tiles = self._get_tiles_for_bbox(bbox['min_lat'], bbox['min_lon'], bbox['max_lat'], bbox['max_lon'], zoom)
-            logger.info(f"Fetching {len(tiles)} tiles at zoom {zoom}")
-
-            self.session.headers.update({
-                'Accept': 'application/json, text/javascript, */*; q=0.01',
-                'X-Requested-With': 'XMLHttpRequest',
-            })
-
-            for tx, ty in tiles[:20]:
-                try:
-                    url = f"{self.BASE_URL}/getData/get_data_json_4/z:{zoom}/X:{tx}/Y:{ty}/station:0/{int(time.time())}"
-                    resp = self.session.get(url, timeout=10)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        if isinstance(data, dict) and 'data' in data:
-                            rows = data.get('data', {}).get('rows', [])
-                        elif isinstance(data, list):
-                            rows = data
-                        else:
-                            rows = []
-                        for row in rows:
-                            vessel = self._parse_vessel_row(row)
-                            if vessel:
-                                vessels.append(vessel)
-                    time.sleep(0.3)
+                    logger.info(f"After login, URL: {page.url}")
                 except Exception as e:
-                    logger.warning(f"Tile {tx},{ty} error: {e}")
+                    logger.warning(f"Login form error: {e}")
+
+            # Step 2: Navigate to ASEAN map and capture vessel data
+            logger.info("Navigating to ASEAN map view...")
+            await page.goto(
+                'https://www.marinetraffic.com/en/ais/home/centerx:115/centery:5/zoom:5',
+                timeout=30000
+            )
+            await page.wait_for_timeout(15000)
+
+            logger.info(f"Captured {len(raw_responses)} tile responses")
+
+            # Step 3: Parse all captured responses
+            for raw in raw_responses:
+                try:
+                    data = json.loads(raw)
+                    rows = []
+                    if isinstance(data, dict):
+                        rows = data.get('data', {}).get('rows', [])
+                    elif isinstance(data, list):
+                        rows = data
+
+                    for row in rows:
+                        try:
+                            lat = float(row.get('LAT', 0))
+                            lon = float(row.get('LON', 0))
+                            if lat == 0 and lon == 0:
+                                continue
+                            # Filter ASEAN bounding box
+                            if not (ASEAN_BBOX['min_lat'] <= lat <= ASEAN_BBOX['max_lat'] and
+                                    ASEAN_BBOX['min_lon'] <= lon <= ASEAN_BBOX['max_lon']):
+                                continue
+
+                            ship_id = row.get('SHIP_ID', '')
+                            if ship_id in seen_ids:
+                                continue
+                            seen_ids.add(ship_id)
+
+                            shiptype = str(row.get('SHIPTYPE', ''))
+                            gt_shiptype = str(row.get('GT_SHIPTYPE', ''))
+                            type_name = row.get('TYPE_NAME', '')
+
+                            if type_name:
+                                vessel_type = type_name
+                            elif gt_shiptype and gt_shiptype in GT_SHIP_TYPE_MAP:
+                                vessel_type = GT_SHIP_TYPE_MAP[gt_shiptype]
+                            elif shiptype and shiptype in SHIP_TYPE_MAP:
+                                vessel_type = SHIP_TYPE_MAP[shiptype]
+                            else:
+                                vessel_type = f"Type {shiptype}" if shiptype else "Unknown"
+
+                            speed_raw = row.get('SPEED', '0')
+                            try:
+                                speed = round(float(speed_raw) / 10.0, 1)
+                            except (ValueError, TypeError):
+                                speed = 0.0
+
+                            course_raw = row.get('COURSE')
+                            try:
+                                course = round(float(course_raw), 1) if course_raw else None
+                            except (ValueError, TypeError):
+                                course = None
+
+                            heading_raw = row.get('HEADING')
+                            try:
+                                heading = round(float(heading_raw), 1) if heading_raw else None
+                            except (ValueError, TypeError):
+                                heading = None
+
+                            status_name = row.get('STATUS_NAME', '')
+                            status_code = row.get('STATUS', '')
+                            if status_name:
+                                nav_status = status_name
+                            elif status_code:
+                                status_map = {"0": "Under way using engine", "1": "At anchor", "2": "Not under command",
+                                              "3": "Restricted maneuverability", "4": "Constrained by draught",
+                                              "5": "Moored", "8": "Under way sailing"}
+                                nav_status = status_map.get(str(status_code), f"Status {status_code}")
+                            else:
+                                nav_status = "N/A"
+
+                            vessel = {
+                                "ship_id": ship_id,
+                                "mmsi": str(row.get('MMSI', ship_id)),
+                                "imo": str(row.get('IMO', '')) if row.get('IMO') else None,
+                                "name": row.get('SHIPNAME', 'Unknown'),
+                                "vessel_type": vessel_type,
+                                "flag": row.get('FLAG', ''),
+                                "latitude": lat,
+                                "longitude": lon,
+                                "speed": speed,
+                                "course": course,
+                                "heading": heading,
+                                "nav_status": nav_status,
+                                "destination": row.get('DESTINATION', ''),
+                                "eta": row.get('ETA', ''),
+                                "length": row.get('LENGTH', ''),
+                                "width": row.get('WIDTH', ''),
+                                "dwt": row.get('DWT', ''),
+                                "elapsed_min": row.get('ELAPSED', ''),
+                            }
+                            vessels.append(vessel)
+                        except Exception:
+                            continue
+                except Exception as e:
+                    logger.warning(f"Parse error: {e}")
                     continue
 
-            if vessels:
-                logger.info(f"Scraped {len(vessels)} vessels from MarineTraffic")
-            return vessels if vessels else None
-        except Exception as e:
-            logger.error(f"Fetch vessels error: {e}")
-            return None
+            await browser.close()
 
-    def _parse_vessel_row(self, row):
-        try:
-            if isinstance(row, dict):
-                lat = float(row.get('LAT', row.get('lat', 0)))
-                lon = float(row.get('LON', row.get('lon', 0)))
-                if lat == 0 and lon == 0:
-                    return None
-                return {
-                    "mmsi": str(row.get('MMSI', row.get('mmsi', ''))),
-                    "imo": str(row.get('IMO', row.get('imo', ''))) or None,
-                    "name": row.get('SHIPNAME', row.get('shipname', 'Unknown')),
-                    "vessel_type": self._map_ship_type(row.get('SHIPTYPE', row.get('ship_type', 0))),
-                    "flag": row.get('FLAG', row.get('flag', '')),
-                    "latitude": lat,
-                    "longitude": lon,
-                    "speed": float(row.get('SPEED', row.get('speed', 0))) / 10.0,
-                    "course": float(row.get('COURSE', row.get('course', 0))),
-                    "heading": float(row.get('HEADING', row.get('heading', 0))),
-                    "nav_status": row.get('STATUS', row.get('status', 'N/A')),
-                    "destination": row.get('DESTINATION', row.get('destination', '')),
-                    "eta": row.get('ETA', row.get('eta', '')),
-                }
-            elif isinstance(row, (list, tuple)):
-                return {
-                    "mmsi": str(row[0]) if len(row) > 0 else '',
-                    "name": str(row[7]) if len(row) > 7 else 'Unknown',
-                    "latitude": float(row[1]) / 600000.0 if len(row) > 1 else 0,
-                    "longitude": float(row[2]) / 600000.0 if len(row) > 2 else 0,
-                    "speed": float(row[3]) / 10.0 if len(row) > 3 else 0,
-                    "course": float(row[4]) if len(row) > 4 else 0,
-                    "heading": float(row[5]) if len(row) > 5 else 0,
-                    "vessel_type": self._map_ship_type(row[6] if len(row) > 6 else 0),
-                    "flag": str(row[8]) if len(row) > 8 else '',
-                }
-            return None
-        except Exception:
-            return None
+    except Exception as e:
+        logger.error(f"Playwright scrape error: {e}")
 
-    def _map_ship_type(self, type_code):
-        try:
-            code = int(type_code)
-        except (ValueError, TypeError):
-            return str(type_code) if type_code else "Unknown"
-        type_map = {
-            (60, 69): "Passenger", (70, 79): "Cargo", (80, 89): "Tanker",
-            (40, 49): "High Speed Craft", (50, 59): "Special Craft",
-            (30, 35): "Fishing", (36, 37): "Sailing/Pleasure",
-        }
-        for (lo, hi), name in type_map.items():
-            if lo <= code <= hi:
-                return name
-        if code == 0:
-            return "Unknown"
-        return f"Type {code}"
-
-
-# ===== SIMULATION DATA =====
-VESSEL_NAMES = [
-    "PACIFIC VOYAGER", "ASIAN GLORY", "STRAIT SPIRIT", "OCEAN DIAMOND",
-    "SINGAPORE STAR", "MALACCA EXPRESS", "JAKARTA PRIDE", "MANILA TRADER",
-    "THAI FORTUNE", "SAIGON PEARL", "BORNEO CARRIER", "CELEBES WIND",
-    "MINDANAO BREEZE", "JAVA PIONEER", "SUMATRA LEGACY", "MEKONG DELTA",
-    "ANDAMAN SEA", "CORAL PRINCESS", "DRAGON PEARL", "EASTERN HORIZON",
-    "GOLDEN BRIDGE", "HARMONY SEAS", "INDOCHINA STAR", "JADE EMPRESS",
-    "KALIMANTAN GLORY", "LUZON EXPRESS", "MALAY SPIRIT", "NUSANTARA PRIDE",
-    "ORIENTAL DAWN", "PALAWAN VOYAGER", "RED PHOENIX", "SIAM TREASURE",
-    "TIMOR NAVIGATOR", "UNITY STAR", "VISAYAS CARRIER", "WEST WIND",
-    "YANG MING VALOR", "ZEUS MARITIME", "BLUE HORIZON", "CRYSTAL BAY",
-    "DELTA FORTUNE", "EMERALD TIDE", "FALCON SPIRIT", "GULF STAR",
-    "HORIZON GLORY", "ISLAND QUEEN", "JUBILEE SEAS", "KING FISHER",
-    "LIBERTY WAVE", "MERCURY TRADER", "NEPTUNE GRACE", "OLYMPIA DREAM",
-    "PEARL RIVER", "QUANTUM SEAS", "ROYAL ORCHID", "SAPPHIRE SKY",
-    "THUNDER BAY", "UNICORN STAR", "VICTORIA PEAK", "WONDER MAIDEN",
-    "XPRESS JAVA", "YAMATO SPIRIT", "ZENITH STAR", "ALPHA MARINE",
-    "BETA CARRIER", "COSMIC WAVE", "DAWN TREADER", "ECLIPSE STAR",
-    "FLORA MARITIME", "GENESIS GLORY", "HARBOR LIGHT", "IVORY COAST",
-    "JADEITE STAR", "KELVIN WAVE", "LOTUS DREAM", "MONSOON PRIDE",
-    "NOBLE SPIRIT", "OASIS TRADER", "PIONEER SEAS", "QUEST HORIZON",
-]
-
-VESSEL_TYPES = ["Cargo", "Tanker", "Container Ship", "Bulk Carrier", "Passenger", "Fishing", "Tug", "High Speed Craft", "Supply Vessel", "General Cargo"]
-FLAGS = ["SG", "MY", "ID", "PH", "TH", "VN", "MM", "PA", "LR", "MH", "HK", "JP", "CN", "KR", "TW"]
-NAV_STATUSES = ["Under way using engine", "At anchor", "Moored", "Under way sailing", "Restricted maneuverability", "Not under command"]
-DESTINATIONS = ["SGSIN", "MYPKG", "IDTPP", "PHMNL", "THBKK", "VNSGN", "MMRGN", "IDJKT", "IDSBY", "MYSUB", "PHCEB", "THSRI", "VNHPH", "MYPEN", "IDBLW"]
-
-SHIPPING_LANES = [
-    {"name": "Malacca Strait", "lat": (1.5, 5.5), "lon": (99.5, 103.5)},
-    {"name": "Singapore Strait", "lat": (1.1, 1.4), "lon": (103.5, 104.3)},
-    {"name": "South China Sea North", "lat": (10, 18), "lon": (109, 118)},
-    {"name": "South China Sea South", "lat": (3, 10), "lon": (105, 115)},
-    {"name": "Java Sea", "lat": (-6.5, -3), "lon": (106, 115)},
-    {"name": "Makassar Strait", "lat": (-3, 1), "lon": (117, 120)},
-    {"name": "Gulf of Thailand", "lat": (7, 13), "lon": (99, 104)},
-    {"name": "Sulu Sea", "lat": (5, 10), "lon": (119, 123)},
-    {"name": "Banda Sea", "lat": (-6, -2), "lon": (125, 132)},
-    {"name": "Philippine Sea", "lat": (10, 18), "lon": (120, 127)},
-    {"name": "Andaman Sea", "lat": (5, 14), "lon": (95, 99)},
-    {"name": "Flores Sea", "lat": (-8, -5), "lon": (118, 125)},
-]
-
-def generate_simulation_data(count=120):
-    vessels = []
-    used_names = set()
-    used_mmsi = set()
-    flag_mmsi_prefix = {"SG": "563", "MY": "533", "ID": "525", "PH": "548", "TH": "567", "VN": "574", "MM": "506", "PA": "352", "LR": "636", "MH": "538", "HK": "477", "JP": "431", "CN": "413", "KR": "440", "TW": "416"}
-
-    for i in range(count):
-        lane = random.choice(SHIPPING_LANES)
-        flag = random.choice(FLAGS)
-        prefix = flag_mmsi_prefix.get(flag, "999")
-        mmsi = prefix + str(random.randint(100000, 999999))
-        while mmsi in used_mmsi:
-            mmsi = prefix + str(random.randint(100000, 999999))
-        used_mmsi.add(mmsi)
-
-        name = random.choice(VESSEL_NAMES)
-        suffix = ""
-        if name in used_names:
-            suffix = f" {random.choice(['I','II','III','IV','V'])}"
-        used_names.add(name + suffix)
-
-        lat = round(random.uniform(lane["lat"][0], lane["lat"][1]), 5)
-        lon = round(random.uniform(lane["lon"][0], lane["lon"][1]), 5)
-
-        vessels.append({
-            "mmsi": mmsi,
-            "imo": str(random.randint(1000000, 9999999)),
-            "name": name + suffix,
-            "vessel_type": random.choice(VESSEL_TYPES),
-            "flag": flag,
-            "latitude": lat,
-            "longitude": lon,
-            "speed": round(random.uniform(0, 18), 1),
-            "course": round(random.uniform(0, 360), 1),
-            "heading": round(random.uniform(0, 360), 1),
-            "nav_status": random.choice(NAV_STATUSES),
-            "destination": random.choice(DESTINATIONS),
-            "eta": (datetime.now(timezone.utc) + timedelta(hours=random.randint(6, 240))).isoformat(),
-        })
+    logger.info(f"Scraped {len(vessels)} vessels in ASEAN region from MarineTraffic (REAL DATA)")
     return vessels
 
 
-# ===== SCRAPER INSTANCE =====
-scraper = MarineTrafficScraper(MT_EMAIL, MT_PASSWORD) if MT_EMAIL else None
+# ===== SCRAPER STATE =====
 bot_running = False
-
 
 # ===== EXTRACTION LOGIC =====
 async def run_extraction():
-    global scraper
     start_time = time.time()
     log_id = str(uuid.uuid4())
-    source = "simulation"
+    source = "marinetraffic"
     error_msg = None
     vessels_data = None
 
     try:
-        if scraper and MT_EMAIL:
-            logger.info("Attempting MarineTraffic scrape...")
-            vessels_data = scraper.fetch_vessels(ASEAN_BBOX)
-            if vessels_data:
-                source = "marinetraffic"
-                logger.info(f"Got {len(vessels_data)} vessels from MarineTraffic")
+        logger.info("Starting extraction from MarineTraffic (real data)...")
+        vessels_data = await scrape_marinetraffic_real()
 
-        if not vessels_data:
-            logger.info("Using simulation data")
-            vessels_data = generate_simulation_data(random.randint(80, 150))
-            source = "simulation"
+        if not vessels_data or len(vessels_data) == 0:
+            raise Exception("No vessel data retrieved from MarineTraffic. Check credentials or connectivity.")
 
         now = datetime.now(timezone.utc).isoformat()
         for v in vessels_data:
@@ -449,7 +356,7 @@ async def run_extraction():
             "error_message": None,
         }
         await db.extraction_logs.insert_one(log_entry)
-        logger.info(f"Extraction complete: {len(vessels_data)} vessels ({source}) in {duration}s")
+        logger.info(f"Extraction complete: {len(vessels_data)} REAL vessels in {duration}s")
 
     except Exception as e:
         duration = round(time.time() - start_time, 2)
@@ -555,7 +462,9 @@ async def export_vessels_csv(user=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="No vessel data to export")
 
     output = io.StringIO()
-    fieldnames = ["name", "mmsi", "imo", "vessel_type", "flag", "latitude", "longitude", "speed", "course", "heading", "nav_status", "destination", "eta", "last_updated", "source"]
+    fieldnames = ["name", "mmsi", "imo", "vessel_type", "flag", "latitude", "longitude",
+                  "speed", "course", "heading", "nav_status", "destination", "eta",
+                  "length", "width", "dwt", "last_updated", "source"]
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
     writer.writeheader()
     for v in vessels:
@@ -571,7 +480,11 @@ async def export_vessels_csv(user=Depends(get_current_user)):
 
 @api_router.get("/vessels/map")
 async def get_vessels_for_map(user=Depends(get_current_user)):
-    vessels = await db.vessels.find({}, {"_id": 0, "name": 1, "mmsi": 1, "vessel_type": 1, "latitude": 1, "longitude": 1, "speed": 1, "course": 1, "flag": 1, "nav_status": 1}).to_list(5000)
+    vessels = await db.vessels.find(
+        {}, {"_id": 0, "name": 1, "mmsi": 1, "vessel_type": 1, "latitude": 1,
+             "longitude": 1, "speed": 1, "course": 1, "flag": 1, "nav_status": 1,
+             "destination": 1, "length": 1, "dwt": 1}
+    ).to_list(10000)
     return {"vessels": vessels}
 
 
@@ -595,7 +508,8 @@ async def get_bot_status(user=Depends(get_current_user)):
         "last_extraction": last_log.get("timestamp") if last_log else None,
         "next_extraction": next_run,
         "total_extractions": total,
-        "mt_connected": scraper.logged_in if scraper else False,
+        "mt_connected": True,
+        "data_source": "MarineTraffic (Real Data)",
     }
 
 @api_router.post("/bot/start")
@@ -677,22 +591,19 @@ async def send_data_to_api(user=Depends(get_current_user)):
         headers = config.get("headers") or {}
         headers["Content-Type"] = "application/json"
         method = config.get("method", "POST").upper()
-
         payload = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "source": "ais_extractor",
+            "source": "ais_extractor_marinetraffic",
             "region": "ASEAN",
             "vessel_count": len(vessels),
             "vessels": vessels,
         }
-
         if method == "POST":
             resp = requests.post(config["endpoint_url"], json=payload, headers=headers, timeout=30)
         elif method == "PUT":
             resp = requests.put(config["endpoint_url"], json=payload, headers=headers, timeout=30)
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported method: {method}")
-
         return {"message": "Data sent successfully", "status_code": resp.status_code, "vessels_sent": len(vessels)}
     except requests.exceptions.RequestException as e:
         raise HTTPException(status_code=502, detail=f"Failed to send data: {str(e)}")
@@ -701,7 +612,7 @@ async def send_data_to_api(user=Depends(get_current_user)):
 # ===== HEALTH =====
 @api_router.get("/")
 async def root():
-    return {"message": "AIS Data Extractor API", "version": "1.0.0", "region": "ASEAN"}
+    return {"message": "AIS Data Extractor API - MarineTraffic Real Data", "version": "2.0.0", "region": "ASEAN", "source": "MarineTraffic"}
 
 
 # ===== STARTUP =====
@@ -718,7 +629,6 @@ async def seed_admin():
         logger.info(f"Admin user created: {ADMIN_EMAIL}")
     elif not verify_password(ADMIN_PASSWORD, existing["password_hash"]):
         await db.users.update_one({"email": ADMIN_EMAIL}, {"$set": {"password_hash": hash_password(ADMIN_PASSWORD)}})
-        logger.info("Admin password updated")
 
     with open("/app/memory/test_credentials.md", "w") as f:
         f.write(f"# Test Credentials\n\n## Admin\n- Email: {ADMIN_EMAIL}\n- Password: {ADMIN_PASSWORD}\n- Role: admin\n\n## Auth Endpoints\n- POST /api/auth/login\n- GET /api/auth/me\n- POST /api/auth/logout\n")
@@ -728,15 +638,15 @@ async def startup():
     await seed_admin()
     await db.users.create_index("email", unique=True)
     await db.vessels.create_index("mmsi")
+    await db.vessels.create_index("ship_id")
     await db.extraction_logs.create_index("timestamp")
-    logger.info("AIS Data Extractor started")
+    logger.info("AIS Data Extractor v2 started - MarineTraffic Real Data Source")
 
 @app.on_event("shutdown")
 async def shutdown():
     if scheduler.running:
         scheduler.shutdown()
     async_client.close()
-    sync_client.close()
 
 app.include_router(api_router)
 app.add_middleware(

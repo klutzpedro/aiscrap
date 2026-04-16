@@ -75,8 +75,9 @@ export default function DashboardPage() {
                     <h1 className="text-2xl sm:text-3xl font-bold text-[#F8FAFC] tracking-tight" style={{ fontFamily: 'Chivo, sans-serif' }}>
                         Dashboard
                     </h1>
-                    <p className="text-sm text-[#94A3B8] mt-1">
-                        ASEAN Maritime Vessel Monitoring
+                    <p className="text-sm text-[#10B981] mt-1 flex items-center gap-1.5">
+                        <span className="w-2 h-2 bg-[#10B981] rounded-full animate-pulse" />
+                        Live Data dari MarineTraffic - ASEAN Region
                     </p>
                 </div>
                 <button
