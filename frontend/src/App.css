@@ -1,34 +1,88 @@
-.App-logo {
-    height: 40vmin;
-    pointer-events: none;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-    .App-logo {
-        animation: App-logo-spin infinite 20s linear;
-    }
-}
-
-.App-header {
-    background-color: #0f0f10;
+/* Global app styles */
+.app-layout {
+    display: flex;
     min-height: 100vh;
+    background: #050A10;
+}
+
+.app-sidebar {
+    width: 260px;
+    min-width: 260px;
+    background: #0F1621;
+    border-right: 1px solid #1E293B;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    font-size: calc(10px + 2vmin);
-    color: white;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 40;
+    transition: transform 0.3s ease;
 }
 
-.App-link {
-    color: #61dafb;
+.app-main {
+    flex: 1;
+    margin-left: 260px;
+    min-height: 100vh;
+    overflow-x: hidden;
 }
 
-@keyframes App-logo-spin {
-    from {
-        transform: rotate(0deg);
+@media (max-width: 768px) {
+    .app-sidebar {
+        transform: translateX(-100%);
     }
-    to {
-        transform: rotate(360deg);
+    .app-sidebar.open {
+        transform: translateX(0);
+    }
+    .app-main {
+        margin-left: 0;
     }
 }
+
+/* Stat card styles */
+.stat-card {
+    background: #0F1621;
+    border: 1px solid #1E293B;
+    border-radius: 6px;
+    padding: 1.25rem;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+.stat-card:hover {
+    border-color: #00A6FB;
+    box-shadow: 0 0 0 1px rgba(0, 166, 251, 0.1);
+}
+
+/* Table styles */
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.data-table th {
+    text-align: left;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #64748B;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #1E293B;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-weight: 600;
+}
+.data-table td {
+    padding: 0.65rem 1rem;
+    border-bottom: 1px solid rgba(30, 41, 59, 0.5);
+    font-size: 0.875rem;
+    color: #F8FAFC;
+}
+.data-table tr:hover td {
+    background: #172233;
+}
+
+/* Vessel type badge colors */
+.badge-cargo { background: rgba(16, 185, 129, 0.15); color: #10B981; }
+.badge-tanker { background: rgba(244, 63, 94, 0.15); color: #F43F5E; }
+.badge-container { background: rgba(0, 166, 251, 0.15); color: #00A6FB; }
+.badge-bulk { background: rgba(245, 158, 11, 0.15); color: #F59E0B; }
+.badge-passenger { background: rgba(168, 85, 247, 0.15); color: #A855F7; }
+.badge-fishing { background: rgba(6, 182, 212, 0.15); color: #06B6D4; }
+.badge-default { background: rgba(148, 163, 184, 0.15); color: #94A3B8; }
