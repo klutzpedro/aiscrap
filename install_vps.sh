@@ -136,17 +136,24 @@ echo -e "${CYAN}[8/10] Creating configuration files...${NC}"
 # Generate JWT secret
 JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 
-# Backend .env
-cat > ${PROJECT_DIR}/backend/.env << ENVEOF
+# Backend .env - PENTING: pakai 'EOF' (quoted) agar # tidak ter-strip
+cat > ${PROJECT_DIR}/backend/.env << 'ENVEOF'
 MONGO_URL="mongodb://localhost:27017"
 DB_NAME="ais_extractor"
 CORS_ORIGINS="*"
-JWT_SECRET="${JWT_SECRET}"
+JWT_SECRET="PLACEHOLDER_JWT"
 ADMIN_EMAIL="admin"
 ADMIN_PASSWORD="Paparoni83#"
 MT_EMAIL="nedwijayanto@gmail.com"
 MT_PASSWORD="Paparoni83"
 ENVEOF
+
+# Inject JWT secret (karena heredoc quoted, variable tidak di-expand)
+sed -i "s|PLACEHOLDER_JWT|${JWT_SECRET}|" ${PROJECT_DIR}/backend/.env
+
+# Verifikasi .env benar
+echo "  Verifikasi .env:"
+grep ADMIN_PASSWORD ${PROJECT_DIR}/backend/.env
 
 # Frontend .env
 cat > ${PROJECT_DIR}/frontend/.env << ENVEOF

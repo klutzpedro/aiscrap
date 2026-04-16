@@ -394,6 +394,25 @@ async def get_me(user=Depends(get_current_user)):
 async def logout():
     return {"message": "Logged out"}
 
+@api_router.post("/auth/reset-admin")
+async def reset_admin():
+    """Reset admin password dari .env - untuk troubleshooting"""
+    admin_email = ADMIN_EMAIL
+    admin_password = ADMIN_PASSWORD
+    existing = await db.users.find_one({"email": admin_email}, {"_id": 0})
+    if existing:
+        new_hash = hash_password(admin_password)
+        await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": new_hash}})
+        return {"message": f"Admin password reset for '{admin_email}'"}
+    else:
+        admin_id = str(uuid.uuid4())
+        await db.users.insert_one({
+            "id": admin_id, "email": admin_email, "password_hash": hash_password(admin_password),
+            "name": "Administrator", "role": "admin",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+        return {"message": f"Admin user created: '{admin_email}'"}
+
 
 # ===== VESSEL ROUTES =====
 @api_router.get("/vessels")
@@ -630,8 +649,13 @@ async def seed_admin():
     elif not verify_password(ADMIN_PASSWORD, existing["password_hash"]):
         await db.users.update_one({"email": ADMIN_EMAIL}, {"$set": {"password_hash": hash_password(ADMIN_PASSWORD)}})
 
-    with open("/app/memory/test_credentials.md", "w") as f:
-        f.write(f"# Test Credentials\n\n## Admin\n- Email: {ADMIN_EMAIL}\n- Password: {ADMIN_PASSWORD}\n- Role: admin\n\n## Auth Endpoints\n- POST /api/auth/login\n- GET /api/auth/me\n- POST /api/auth/logout\n")
+    try:
+        cred_path = Path(__file__).parent.parent / "memory" / "test_credentials.md"
+        cred_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(cred_path, "w") as f:
+            f.write(f"# Test Credentials\n\n## Admin\n- Email: {ADMIN_EMAIL}\n- Password: {ADMIN_PASSWORD}\n- Role: admin\n\n## Auth Endpoints\n- POST /api/auth/login\n- GET /api/auth/me\n- POST /api/auth/logout\n")
+    except Exception:
+        pass
 
 @app.on_event("startup")
 async def startup():
