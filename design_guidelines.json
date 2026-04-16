@@ -1,0 +1,85 @@
+{
+  "theme": "DARK",
+  "archetype": "2 (The Performance Pro)",
+  "color_palette": {
+    "background": "#050A10",
+    "surface": "#0F1621",
+    "surface_hover": "#172233",
+    "border": "#1E293B",
+    "primary": "#00A6FB",
+    "primary_hover": "#008CD4",
+    "text_primary": "#F8FAFC",
+    "text_secondary": "#94A3B8",
+    "text_tertiary": "#64748B",
+    "status": {
+      "success": "#10B981",
+      "error": "#F43F5E",
+      "warning": "#F59E0B"
+    }
+  },
+  "typography": {
+    "font_family": {
+      "heading": "Chivo, sans-serif",
+      "body": "IBM Plex Sans, sans-serif",
+      "mono": "IBM Plex Mono, monospace"
+    },
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl font-bold tracking-tight",
+      "h2": "text-2xl sm:text-3xl font-bold tracking-tight",
+      "h3": "text-xl sm:text-2xl font-bold",
+      "h4": "text-lg sm:text-xl font-semibold",
+      "body": "text-sm md:text-base leading-relaxed",
+      "small": "text-xs md:text-sm text-secondary uppercase tracking-[0.2em]"
+    }
+  },
+  "layout_and_spacing": {
+    "grid_strategy": "MODE B: THE CONTROL ROOM GRID (Base grid-cols-1 md:grid-cols-3 lg:grid-cols-4, tight gaps gap-4 to gap-6)",
+    "container_padding": "p-4 md:p-6 lg:p-8",
+    "card_padding": "p-4 md:p-6",
+    "border_radius": "rounded-md",
+    "alignment": "Left-align text and data; Optical alignment over geometric."
+  },
+  "components": {
+    "cards": "Flat solid surfaces. 1px solid border (border-border). No soft shadows. Subtle shadow-sm on hover. Use neo-brutalist tactile variant where applicable.",
+    "buttons": "Primary buttons: bg-primary text-white hover:bg-primary_hover. Secondary: bg-surface text-text_primary border border-border hover:bg-surface_hover.",
+    "tables": "Dense rows, left-aligned, text-sm, explicit hover states (hover:bg-surface_hover). Use Shadcn Table.",
+    "map": "Use react-leaflet with CartoDB Dark Matter tile layer for the dark mode tactical map of the ASEAN region.",
+    "forms": "Shadcn Inputs, Selects, and Forms. Background surface, 1px border. Focus ring 2px primary color.",
+    "navigation": "Sticky left sidebar or top nav. Glassmorphism only for sticky top nav (bg-[#050A10]/80 backdrop-blur-xl border-b border-white/10)."
+  },
+  "motion_and_interactions": {
+    "hover_states": "All interactive elements must change background or border color on hover. transition-colors duration-200.",
+    "active_states": "scale-[0.98] on buttons.",
+    "loading": "Use mono-spaced text loaders or subtle radar sweep animations.",
+    "data_updates": "Flash green background briefly when new vessel data is extracted."
+  },
+  "media": {
+    "images": {
+      "login_background": {
+        "url": "https://images.unsplash.com/photo-1774646598677-cc38cb3cac00?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODd8MHwxfHNlYXJjaHwxfHxhYnN0cmFjdCUyMGdsb3dpbmclMjBtYXB8ZW58MHx8fHwxNzc2MzE3NzIwfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Abstract blue topographic map with glowing lines, used for the login page background with a black overlay (bg-black/60)."
+      },
+      "dashboard_hero_accent": {
+        "url": "https://images.unsplash.com/photo-1758900348926-cd1ccbc15fef?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDZ8MHwxfHNlYXJjaHwzfHxjYXJnbyUyMHNoaXAlMjBvY2VhbiUyMGFlcmlhbHxlbnwwfHx8fDE3NzYzMTc3MDd8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Aerial view of a cargo ship sailing on the ocean, used sparingly in marketing or profile sections with a heavy dark overlay."
+      }
+    },
+    "icons_library": "@phosphor-icons/react"
+  },
+  "accessibility_and_testing": {
+    "contrast": "Ensure text contrast meets APCA/WCAG AA. Never use pure black/gray without tint.",
+    "testing": "All interactive elements MUST include a data-testid attribute in kebab-case (e.g., data-testid='login-submit-button').",
+    "motion": "Respect prefers-reduced-motion."
+  },
+  "instructions_to_main_agent": [
+    "1. Initialize Tailwind with the provided color palette (use #050A10 as background).",
+    "2. Setup Google Fonts: Chivo, IBM Plex Sans, IBM Plex Mono.",
+    "3. Use @phosphor-icons/react for all icons.",
+    "4. Install and use react-leaflet for the map component. Use CartoDB Dark Matter tile layer ('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png') focusing on ASEAN coordinates (Lat: ~4.0, Lng: ~114.0).",
+    "5. Use Shadcn components for tables, dropdowns, buttons, inputs, dialogs.",
+    "6. Use recharts for the dashboard statistics.",
+    "7. Do not use generic placeholders for missing data, display '-' or 'N/A' styled clearly.",
+    "8. Ensure the dashboard utilizes a tight grid layout with a 'Command Center' aesthetic (Mode B Grid).",
+    "9. Implement a dark, immersive Login page utilizing the abstract glowing map image."
+  ]
+}
