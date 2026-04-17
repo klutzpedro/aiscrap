@@ -424,10 +424,35 @@ async def run_extraction():
         if vessels_data:
             await db.vessels.insert_many(vessels_data)
 
+        # Simpan ke history - semua field lengkap dengan timestamp
+        history_docs = []
         for v in vessels_data:
-            history_doc = {**v, "recorded_at": now}
-            history_doc.pop("_id", None)
-            await db.vessel_history.insert_one(history_doc)
+            hdoc = {
+                "ship_id": v.get("ship_id", ""),
+                "mmsi": v.get("mmsi", ""),
+                "imo": v.get("imo"),
+                "name": v.get("name", "Unknown"),
+                "vessel_type": v.get("vessel_type", ""),
+                "flag": v.get("flag", ""),
+                "flag_url": v.get("flag_url"),
+                "photo_url": v.get("photo_url"),
+                "latitude": v.get("latitude", 0),
+                "longitude": v.get("longitude", 0),
+                "speed": v.get("speed", 0),
+                "course": v.get("course"),
+                "heading": v.get("heading"),
+                "nav_status": v.get("nav_status", ""),
+                "destination": v.get("destination", ""),
+                "eta": v.get("eta", ""),
+                "length": v.get("length", ""),
+                "width": v.get("width", ""),
+                "dwt": v.get("dwt", ""),
+                "extraction_id": log_id,
+                "recorded_at": now,
+            }
+            history_docs.append(hdoc)
+        if history_docs:
+            await db.vessel_history.insert_many(history_docs)
 
         duration = round(time.time() - start_time, 2)
         log_entry = {
@@ -592,6 +617,107 @@ async def get_vessels_for_map(user=Depends(get_current_user)):
              "destination": 1, "length": 1, "width": 1, "dwt": 1}
     ).to_list(10000)
     return {"vessels": vessels}
+
+
+# ===== VESSEL TRACK HISTORY =====
+@api_router.get("/vessels/{ship_id}/track")
+async def get_vessel_track(
+    ship_id: str,
+    hours: int = Query(24, ge=1, le=720),
+    user=Depends(get_current_user)
+):
+    """Get movement track history for a specific vessel"""
+    # Calculate time cutoff
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+    # Find all history points for this vessel
+    track = await db.vessel_history.find(
+        {"ship_id": ship_id, "recorded_at": {"$gte": cutoff}},
+        {"_id": 0, "latitude": 1, "longitude": 1, "speed": 1, "course": 1,
+         "heading": 1, "nav_status": 1, "recorded_at": 1}
+    ).sort("recorded_at", 1).to_list(5000)
+
+    # Get vessel info from latest data
+    vessel_info = await db.vessels.find_one({"ship_id": ship_id}, {"_id": 0})
+    if not vessel_info:
+        # Fallback: get from latest history
+        vessel_info = await db.vessel_history.find_one(
+            {"ship_id": ship_id}, {"_id": 0},
+            sort=[("recorded_at", -1)]
+        )
+
+    return {
+        "ship_id": ship_id,
+        "vessel": vessel_info,
+        "track": track,
+        "track_points": len(track),
+        "hours_range": hours,
+    }
+
+@api_router.get("/vessels/{ship_id}/detail")
+async def get_vessel_detail(ship_id: str, user=Depends(get_current_user)):
+    """Get full detail of a vessel including latest position and track summary"""
+    # Current position
+    vessel = await db.vessels.find_one({"ship_id": ship_id}, {"_id": 0})
+    if not vessel:
+        vessel = await db.vessel_history.find_one(
+            {"ship_id": ship_id}, {"_id": 0},
+            sort=[("recorded_at", -1)]
+        )
+    if not vessel:
+        raise HTTPException(status_code=404, detail="Vessel not found")
+
+    # Track summary
+    total_points = await db.vessel_history.count_documents({"ship_id": ship_id})
+    first_seen = await db.vessel_history.find_one(
+        {"ship_id": ship_id}, {"_id": 0, "recorded_at": 1},
+        sort=[("recorded_at", 1)]
+    )
+    last_seen = await db.vessel_history.find_one(
+        {"ship_id": ship_id}, {"_id": 0, "recorded_at": 1},
+        sort=[("recorded_at", -1)]
+    )
+
+    return {
+        "vessel": vessel,
+        "track_summary": {
+            "total_points": total_points,
+            "first_seen": first_seen.get("recorded_at") if first_seen else None,
+            "last_seen": last_seen.get("recorded_at") if last_seen else None,
+        }
+    }
+
+@api_router.get("/history/search")
+async def search_vessel_history(
+    name: Optional[str] = None,
+    mmsi: Optional[str] = None,
+    ship_id: Optional[str] = None,
+    hours: int = Query(24, ge=1, le=720),
+    user=Depends(get_current_user)
+):
+    """Search vessel history by name/mmsi/ship_id"""
+    query = {}
+    if ship_id:
+        query["ship_id"] = ship_id
+    elif mmsi:
+        query["mmsi"] = mmsi
+    elif name:
+        query["name"] = {"$regex": name, "$options": "i"}
+    else:
+        raise HTTPException(status_code=400, detail="Provide name, mmsi, or ship_id")
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    query["recorded_at"] = {"$gte": cutoff}
+
+    track = await db.vessel_history.find(
+        query,
+        {"_id": 0, "ship_id": 1, "name": 1, "latitude": 1, "longitude": 1,
+         "speed": 1, "course": 1, "heading": 1, "nav_status": 1,
+         "flag": 1, "vessel_type": 1, "photo_url": 1, "flag_url": 1,
+         "destination": 1, "recorded_at": 1}
+    ).sort("recorded_at", 1).to_list(5000)
+
+    return {"query": {k: v for k, v in query.items() if k != "recorded_at"}, "hours": hours, "points": len(track), "track": track}
 
 
 # ===== BOT ROUTES =====
@@ -771,6 +897,9 @@ async def startup():
     await db.vessels.create_index("mmsi")
     await db.vessels.create_index("ship_id")
     await db.extraction_logs.create_index("timestamp")
+    await db.vessel_history.create_index([("ship_id", 1), ("recorded_at", -1)])
+    await db.vessel_history.create_index("recorded_at")
+    await db.vessel_history.create_index("name")
     logger.info("AIS Data Extractor v2 started - MarineTraffic Real Data Source")
 
 @app.on_event("shutdown")

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Search, Download, ChevronLeft, ChevronRight, Filter, Loader2, Ship } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Search, Download, ChevronLeft, ChevronRight, Filter, Loader2, Ship, Route } from 'lucide-react';
 
 function getTypeBadge(type) {
     const map = {
@@ -14,6 +15,7 @@ function getTypeBadge(type) {
 
 export default function VesselsPage() {
     const { axiosAuth } = useAuth();
+    const navigate = useNavigate();
     const [vessels, setVessels] = useState([]);
     const [total, setTotal] = useState(0);
     const [pages, setPages] = useState(0);
@@ -183,6 +185,7 @@ export default function VesselsPage() {
                                     <th>Course</th>
                                     <th>Status</th>
                                     <th>Destination</th>
+                                    <th>Track</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -215,11 +218,22 @@ export default function VesselsPage() {
                                         <td className="font-mono text-xs">{v.course ?? '-'}&deg;</td>
                                         <td className="text-xs text-[#94A3B8] whitespace-nowrap">{v.nav_status || '-'}</td>
                                         <td className="text-xs text-[#94A3B8]">{v.destination || '-'}</td>
+                                        <td>
+                                            {v.ship_id && (
+                                                <button
+                                                    onClick={() => navigate(`/track/${v.ship_id}`)}
+                                                    className="text-[#00A6FB] hover:text-[#008CD4] text-xs flex items-center gap-1 transition-colors"
+                                                    data-testid={`track-btn-${i}`}
+                                                >
+                                                    <Route className="w-3 h-3" /> Track
+                                                </button>
+                                            )}
+                                        </td>
                                     </tr>
                                 ))}
                                 {vessels.length === 0 && (
                                     <tr>
-                                        <td colSpan="11" className="text-center text-[#64748B] py-12">
+                                        <td colSpan="12" className="text-center text-[#64748B] py-12">
                                             <Ship className="w-8 h-8 mx-auto mb-2 opacity-30" />
                                             No vessels found
                                         </td>

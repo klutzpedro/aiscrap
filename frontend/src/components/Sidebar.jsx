@@ -1,11 +1,12 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Anchor, LayoutDashboard, Ship, ScrollText, Settings, LogOut, Menu, X } from 'lucide-react';
+import { Anchor, LayoutDashboard, Ship, ScrollText, Settings, LogOut, Menu, X, Route } from 'lucide-react';
 import { useState } from 'react';
 
 const navItems = [
     { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { path: '/vessels', label: 'Vessels', icon: Ship },
+    { path: '/track', label: 'Vessel Track', icon: Route },
     { path: '/logs', label: 'Extraction Logs', icon: ScrollText },
     { path: '/settings', label: 'Settings', icon: Settings },
 ];
