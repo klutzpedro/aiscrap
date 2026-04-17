@@ -143,7 +143,7 @@ function VesselLayer({ vessels }) {
 
             const flagUrl = getFlagUrl(closest.flag);
             const photoUrl = closest.ship_id && !closest.ship_id.includes('==')
-                ? `https://photos.marinetraffic.com/ais/showphoto.aspx?shipid=${closest.ship_id}&size=thumb300`
+                ? `https://www.marinetraffic.com/getAssetDefaultPhoto/?photo_size=800&asset_id=${closest.ship_id}&asset_type_id=0`
                 : null;
 
             const html = `

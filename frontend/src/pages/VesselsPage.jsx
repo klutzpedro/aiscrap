@@ -193,14 +193,9 @@ export default function VesselsPage() {
                                     <tr key={v.mmsi || i} data-testid={`vessel-row-${i}`}>
                                         <td className="font-medium whitespace-nowrap">
                                             <div className="flex items-center gap-2">
-                                                {v.ship_id && !v.ship_id.includes('==') && (
-                                                    <img
-                                                        src={`https://photos.marinetraffic.com/ais/showphoto.aspx?shipid=${v.ship_id}&size=thumb300`}
-                                                        alt=""
-                                                        className="w-8 h-8 rounded object-cover flex-shrink-0"
-                                                        onError={(e) => { e.target.style.display = 'none'; }}
-                                                    />
-                                                )}
+                                                <span className={`inline-flex items-center justify-center w-7 h-7 rounded text-[10px] font-bold flex-shrink-0 ${getTypeBadge(v.vessel_type)}`}>
+                                                    {(v.vessel_type || '?')[0]}
+                                                </span>
                                                 <span>{v.name || 'N/A'}</span>
                                             </div>
                                         </td>

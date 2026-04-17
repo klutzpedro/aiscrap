@@ -277,7 +277,7 @@ async def scrape_marinetraffic_real():
 
                             # Generate photo & flag URLs
                             has_photo = ship_id and '==' not in str(ship_id)
-                            photo_url = f"https://photos.marinetraffic.com/ais/showphoto.aspx?shipid={ship_id}&size=thumb300" if has_photo else None
+                            photo_url = f"https://www.marinetraffic.com/getAssetDefaultPhoto/?photo_size=800&asset_id={ship_id}&asset_type_id=0" if has_photo else None
                             flag_code = row.get('FLAG', '')
                             flag_url = f"https://flagcdn.com/w80/{flag_code.lower()}.png" if flag_code else None
 
@@ -718,6 +718,45 @@ async def search_vessel_history(
     ).sort("recorded_at", 1).to_list(5000)
 
     return {"query": {k: v for k, v in query.items() if k != "recorded_at"}, "hours": hours, "points": len(track), "track": track}
+
+
+# ====================================================================
+# PHOTO PROXY - Fetch foto kapal dari MarineTraffic dan cache
+# ====================================================================
+from fastapi.responses import Response
+import base64
+
+@api_router.get("/photo/{ship_id}")
+async def get_vessel_photo(ship_id: str):
+    """Proxy foto kapal dari MarineTraffic dengan cache"""
+    cached = await db.photo_cache.find_one({"ship_id": ship_id}, {"_id": 0})
+    if cached and cached.get("image_data"):
+        img_bytes = base64.b64decode(cached["image_data"])
+        return Response(content=img_bytes, media_type=cached.get("content_type", "image/jpeg"),
+                       headers={"Cache-Control": "public, max-age=86400"})
+    try:
+        import cloudscraper as cs_mod
+        scraper_cs = cs_mod.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False})
+        url = f"https://www.marinetraffic.com/getAssetDefaultPhoto/?photo_size=800&asset_id={ship_id}&asset_type_id=0"
+        resp = scraper_cs.get(url, timeout=15)
+        if resp.status_code == 200 and 'image' in resp.headers.get('content-type', ''):
+            img_bytes = resp.content
+            await db.photo_cache.update_one(
+                {"ship_id": ship_id},
+                {"$set": {
+                    "ship_id": ship_id,
+                    "image_data": base64.b64encode(img_bytes).decode('utf-8'),
+                    "content_type": resp.headers.get('content-type', 'image/jpeg'),
+                    "cached_at": datetime.now(timezone.utc).isoformat(),
+                }}, upsert=True)
+            return Response(content=img_bytes, media_type="image/jpeg",
+                           headers={"Cache-Control": "public, max-age=86400"})
+    except Exception as e:
+        logger.warning(f"Photo fetch error {ship_id}: {e}")
+    pixel = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n\xb4\x00\x00\x00\x00IEND\xaeB`\x82'
+    return Response(content=pixel, media_type="image/png", headers={"Cache-Control": "public, max-age=3600"})
+
+
 # ====================================================================
 # EXTERNAL API - Untuk digunakan aplikasi lain (tanpa login dashboard)
 # Semua endpoint di bawah /api/ext/ bisa diakses aplikasi external
