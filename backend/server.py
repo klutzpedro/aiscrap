@@ -718,6 +718,284 @@ async def search_vessel_history(
     ).sort("recorded_at", 1).to_list(5000)
 
     return {"query": {k: v for k, v in query.items() if k != "recorded_at"}, "hours": hours, "points": len(track), "track": track}
+# ====================================================================
+# EXTERNAL API - Untuk digunakan aplikasi lain (tanpa login dashboard)
+# Semua endpoint di bawah /api/ext/ bisa diakses aplikasi external
+# ====================================================================
+external_router = APIRouter(prefix="/api/ext")
+
+@external_router.get("/")
+async def ext_root():
+    """API info dan daftar endpoint yang tersedia"""
+    return {
+        "service": "AIS Data Extractor - External API",
+        "version": "2.0.0",
+        "region": "ASEAN",
+        "source": "MarineTraffic",
+        "endpoints": {
+            "GET /api/ext/vessels": "Semua kapal (posisi terkini) - params: search, vessel_type, flag, page, limit",
+            "GET /api/ext/vessels/stats": "Statistik kapal (total, tipe, bendera)",
+            "GET /api/ext/vessels/{ship_id}": "Detail lengkap satu kapal",
+            "GET /api/ext/vessels/{ship_id}/track": "Track pergerakan kapal - params: hours (1-720)",
+            "GET /api/ext/vessels/{ship_id}/history": "Semua history record kapal - params: hours, page, limit",
+            "GET /api/ext/track/search": "Cari track kapal by nama/mmsi - params: name, mmsi, ship_id, hours",
+            "GET /api/ext/track/multi": "Track beberapa kapal sekaligus - params: ship_ids (comma separated), hours",
+            "GET /api/ext/extractions": "Log extraction terakhir",
+        }
+    }
+
+@external_router.get("/vessels")
+async def ext_get_vessels(
+    search: Optional[str] = None,
+    vessel_type: Optional[str] = None,
+    flag: Optional[str] = None,
+    page: int = Query(1, ge=1),
+    limit: int = Query(100, ge=1, le=1000),
+):
+    """Semua kapal - posisi terkini di wilayah ASEAN"""
+    query = {}
+    if search:
+        query["$or"] = [
+            {"name": {"$regex": search, "$options": "i"}},
+            {"mmsi": {"$regex": search, "$options": "i"}},
+        ]
+    if vessel_type:
+        query["vessel_type"] = {"$regex": vessel_type, "$options": "i"}
+    if flag:
+        query["flag"] = flag.upper()
+
+    total = await db.vessels.count_documents(query)
+    skip = (page - 1) * limit
+    vessels = await db.vessels.find(query, {
+        "_id": 0, "extraction_id": 0
+    }).skip(skip).limit(limit).to_list(limit)
+
+    return {
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": math.ceil(total / limit) if total > 0 else 0,
+        "vessels": vessels,
+    }
+
+@external_router.get("/vessels/stats")
+async def ext_get_stats():
+    """Statistik overview semua kapal"""
+    total = await db.vessels.count_documents({})
+    type_pipeline = [{"$group": {"_id": "$vessel_type", "count": {"$sum": 1}}}, {"$sort": {"count": -1}}]
+    type_stats = await db.vessels.aggregate(type_pipeline).to_list(50)
+    flag_pipeline = [{"$group": {"_id": "$flag", "count": {"$sum": 1}}}, {"$sort": {"count": -1}}, {"$limit": 15}]
+    flag_stats = await db.vessels.aggregate(flag_pipeline).to_list(15)
+    speed_pipeline = [{"$group": {"_id": None, "avg_speed": {"$avg": "$speed"}, "max_speed": {"$max": "$speed"}}}]
+    speed_stats = await db.vessels.aggregate(speed_pipeline).to_list(1)
+
+    last_log = await db.extraction_logs.find_one({"status": "success"}, {"_id": 0}, sort=[("timestamp", -1)])
+
+    return {
+        "total_vessels": total,
+        "vessel_types": [{"type": t["_id"] or "Unknown", "count": t["count"]} for t in type_stats],
+        "top_flags": [{"flag": f["_id"] or "N/A", "count": f["count"]} for f in flag_stats],
+        "avg_speed": round(speed_stats[0]["avg_speed"], 1) if speed_stats and speed_stats[0].get("avg_speed") else 0,
+        "max_speed": round(speed_stats[0]["max_speed"], 1) if speed_stats and speed_stats[0].get("max_speed") else 0,
+        "last_extraction": {
+            "timestamp": last_log.get("timestamp"),
+            "vessels_count": last_log.get("vessels_count"),
+            "source": last_log.get("source"),
+        } if last_log else None,
+    }
+
+@external_router.get("/vessels/{ship_id}")
+async def ext_get_vessel_detail(ship_id: str):
+    """Detail lengkap satu kapal + summary track"""
+    vessel = await db.vessels.find_one({"ship_id": ship_id}, {"_id": 0, "extraction_id": 0})
+    if not vessel:
+        vessel = await db.vessel_history.find_one(
+            {"ship_id": ship_id}, {"_id": 0, "extraction_id": 0},
+            sort=[("recorded_at", -1)]
+        )
+    if not vessel:
+        raise HTTPException(status_code=404, detail=f"Vessel with ship_id '{ship_id}' not found")
+
+    total_points = await db.vessel_history.count_documents({"ship_id": ship_id})
+    first_seen = await db.vessel_history.find_one({"ship_id": ship_id}, {"_id": 0, "recorded_at": 1, "latitude": 1, "longitude": 1}, sort=[("recorded_at", 1)])
+    last_seen = await db.vessel_history.find_one({"ship_id": ship_id}, {"_id": 0, "recorded_at": 1, "latitude": 1, "longitude": 1}, sort=[("recorded_at", -1)])
+
+    return {
+        "vessel": vessel,
+        "track_summary": {
+            "total_track_points": total_points,
+            "first_seen": first_seen if first_seen else None,
+            "last_seen": last_seen if last_seen else None,
+        }
+    }
+
+@external_router.get("/vessels/{ship_id}/track")
+async def ext_get_vessel_track(
+    ship_id: str,
+    hours: int = Query(168, ge=1, le=720),
+):
+    """Track pergerakan kapal - semua titik posisi dalam rentang waktu"""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+    vessel_info = await db.vessels.find_one({"ship_id": ship_id}, {"_id": 0, "extraction_id": 0})
+    if not vessel_info:
+        vessel_info = await db.vessel_history.find_one(
+            {"ship_id": ship_id}, {"_id": 0, "extraction_id": 0},
+            sort=[("recorded_at", -1)]
+        )
+
+    track = await db.vessel_history.find(
+        {"ship_id": ship_id, "recorded_at": {"$gte": cutoff}},
+        {"_id": 0, "latitude": 1, "longitude": 1, "speed": 1, "course": 1,
+         "heading": 1, "nav_status": 1, "destination": 1, "recorded_at": 1}
+    ).sort("recorded_at", 1).to_list(10000)
+
+    return {
+        "ship_id": ship_id,
+        "vessel": vessel_info,
+        "hours_range": hours,
+        "track_points": len(track),
+        "track": track,
+    }
+
+@external_router.get("/vessels/{ship_id}/history")
+async def ext_get_vessel_history(
+    ship_id: str,
+    hours: int = Query(720, ge=1, le=8760),
+    page: int = Query(1, ge=1),
+    limit: int = Query(100, ge=1, le=1000),
+):
+    """Semua history record kapal - data lengkap per extraction"""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    query = {"ship_id": ship_id, "recorded_at": {"$gte": cutoff}}
+
+    total = await db.vessel_history.count_documents(query)
+    skip = (page - 1) * limit
+    records = await db.vessel_history.find(
+        query, {"_id": 0, "extraction_id": 0}
+    ).sort("recorded_at", -1).skip(skip).limit(limit).to_list(limit)
+
+    return {
+        "ship_id": ship_id,
+        "hours_range": hours,
+        "total": total,
+        "page": page,
+        "pages": math.ceil(total / limit) if total > 0 else 0,
+        "records": records,
+    }
+
+@external_router.get("/track/search")
+async def ext_search_track(
+    name: Optional[str] = None,
+    mmsi: Optional[str] = None,
+    ship_id: Optional[str] = None,
+    hours: int = Query(168, ge=1, le=720),
+):
+    """Cari track kapal berdasarkan nama, MMSI, atau ship_id"""
+    query = {}
+    if ship_id:
+        query["ship_id"] = ship_id
+    elif mmsi:
+        query["mmsi"] = mmsi
+    elif name:
+        query["name"] = {"$regex": name, "$options": "i"}
+    else:
+        raise HTTPException(status_code=400, detail="Harus isi parameter: name, mmsi, atau ship_id")
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    query["recorded_at"] = {"$gte": cutoff}
+
+    # Get unique ships matching query
+    pipeline = [
+        {"$match": query},
+        {"$sort": {"recorded_at": -1}},
+        {"$group": {
+            "_id": "$ship_id",
+            "name": {"$first": "$name"},
+            "mmsi": {"$first": "$mmsi"},
+            "vessel_type": {"$first": "$vessel_type"},
+            "flag": {"$first": "$flag"},
+            "flag_url": {"$first": "$flag_url"},
+            "photo_url": {"$first": "$photo_url"},
+            "latest_lat": {"$first": "$latitude"},
+            "latest_lon": {"$first": "$longitude"},
+            "latest_speed": {"$first": "$speed"},
+            "latest_recorded": {"$first": "$recorded_at"},
+            "track_points": {"$sum": 1},
+        }},
+        {"$sort": {"track_points": -1}},
+        {"$limit": 20},
+    ]
+    results = await db.vessel_history.aggregate(pipeline).to_list(20)
+
+    ships = []
+    for r in results:
+        ships.append({
+            "ship_id": r["_id"],
+            "name": r["name"],
+            "mmsi": r["mmsi"],
+            "vessel_type": r["vessel_type"],
+            "flag": r["flag"],
+            "flag_url": r["flag_url"],
+            "photo_url": r["photo_url"],
+            "latest_position": {"latitude": r["latest_lat"], "longitude": r["latest_lon"]},
+            "latest_speed": r["latest_speed"],
+            "latest_recorded_at": r["latest_recorded"],
+            "track_points": r["track_points"],
+        })
+
+    return {
+        "query": {k: v for k, v in query.items() if k != "recorded_at"},
+        "hours_range": hours,
+        "ships_found": len(ships),
+        "ships": ships,
+    }
+
+@external_router.get("/track/multi")
+async def ext_get_multi_track(
+    ship_ids: str = Query(..., description="Comma-separated ship_ids, contoh: 711882,732057,214431"),
+    hours: int = Query(168, ge=1, le=720),
+):
+    """Track beberapa kapal sekaligus - untuk visualisasi multi-vessel"""
+    ids = [s.strip() for s in ship_ids.split(",") if s.strip()]
+    if not ids:
+        raise HTTPException(status_code=400, detail="ship_ids tidak boleh kosong")
+    if len(ids) > 20:
+        raise HTTPException(status_code=400, detail="Maksimal 20 kapal per request")
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    results = {}
+
+    for sid in ids:
+        vessel = await db.vessels.find_one({"ship_id": sid}, {"_id": 0, "extraction_id": 0})
+        if not vessel:
+            vessel = await db.vessel_history.find_one(
+                {"ship_id": sid}, {"_id": 0, "extraction_id": 0},
+                sort=[("recorded_at", -1)]
+            )
+        track = await db.vessel_history.find(
+            {"ship_id": sid, "recorded_at": {"$gte": cutoff}},
+            {"_id": 0, "latitude": 1, "longitude": 1, "speed": 1, "course": 1,
+             "heading": 1, "recorded_at": 1}
+        ).sort("recorded_at", 1).to_list(5000)
+
+        results[sid] = {
+            "vessel": vessel,
+            "track_points": len(track),
+            "track": track,
+        }
+
+    return {
+        "hours_range": hours,
+        "ships_requested": len(ids),
+        "results": results,
+    }
+
+@external_router.get("/extractions")
+async def ext_get_extractions(limit: int = Query(10, ge=1, le=50)):
+    """Log extraction terakhir"""
+    logs = await db.extraction_logs.find({}, {"_id": 0}).sort("timestamp", -1).limit(limit).to_list(limit)
+    return {"total_shown": len(logs), "extractions": logs}
 
 
 # ===== BOT ROUTES =====
@@ -909,6 +1187,7 @@ async def shutdown():
     async_client.close()
 
 app.include_router(api_router)
+app.include_router(external_router)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
