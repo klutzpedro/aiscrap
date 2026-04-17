@@ -70,30 +70,37 @@ const VesselCanvasLayer = L.Layer.extend({
         const ctx = this._canvas.getContext('2d');
         ctx.clearRect(0, 0, size.x, size.y);
         const zoom = map.getZoom();
-        const triSize = Math.max(4, Math.min(10, zoom - 1));
+        const triSize = Math.max(3, Math.min(10, zoom));
 
+        // Batch draw by color for performance
+        const byColor = {};
         for (const v of this._vessels) {
             const pt = map.latLngToContainerPoint([v.latitude, v.longitude]);
             if (pt.x < -20 || pt.x > size.x + 20 || pt.y < -20 || pt.y > size.y + 20) continue;
             const color = getColor(v.vessel_type);
-            const heading = (v.heading ?? v.course ?? 0) * Math.PI / 180;
-            ctx.save();
-            ctx.translate(pt.x, pt.y);
-            ctx.rotate(heading);
-            ctx.beginPath();
-            ctx.moveTo(0, -triSize);
-            ctx.lineTo(triSize * 0.6, triSize * 0.7);
-            ctx.lineTo(0, triSize * 0.3);
-            ctx.lineTo(-triSize * 0.6, triSize * 0.7);
-            ctx.closePath();
+            if (!byColor[color]) byColor[color] = [];
+            byColor[color].push({ x: pt.x, y: pt.y, h: (v.heading ?? v.course ?? 0) * Math.PI / 180 });
+        }
+
+        ctx.lineWidth = 0.5;
+        ctx.strokeStyle = '#000';
+        for (const [color, points] of Object.entries(byColor)) {
             ctx.fillStyle = color;
             ctx.globalAlpha = 0.85;
+            ctx.beginPath();
+            for (const p of points) {
+                const cos = Math.cos(p.h), sin = Math.sin(p.h);
+                const tx = (dx, dy) => p.x + dx * cos - dy * sin;
+                const ty = (dx, dy) => p.y + dx * sin + dy * cos;
+                ctx.moveTo(tx(0, -triSize), ty(0, -triSize));
+                ctx.lineTo(tx(triSize * 0.6, triSize * 0.7), ty(triSize * 0.6, triSize * 0.7));
+                ctx.lineTo(tx(0, triSize * 0.3), ty(0, triSize * 0.3));
+                ctx.lineTo(tx(-triSize * 0.6, triSize * 0.7), ty(-triSize * 0.6, triSize * 0.7));
+                ctx.closePath();
+            }
             ctx.fill();
             ctx.globalAlpha = 1;
-            ctx.strokeStyle = '#000';
-            ctx.lineWidth = 0.5;
             ctx.stroke();
-            ctx.restore();
         }
     }
 });

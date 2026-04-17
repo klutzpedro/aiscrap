@@ -224,18 +224,23 @@ async def scrape_marinetraffic_real():
             except Exception as e:
                 logger.warning(f"Login form error: {e}")
 
-            # Step 2: Navigate to wide-area map view (ASEAN + Australia + Indian Ocean + Red Sea)
-            logger.info("Navigating to wide-area map view...")
-            try:
-                await page.goto(
-                    'https://www.marinetraffic.com/en/ais/home/centerx:100/centery:0/zoom:4',
-                    timeout=45000
-                )
-            except Exception as map_err:
-                logger.warning(f"Map navigation error: {map_err}, waiting anyway...")
+            # Step 2: Navigate to MULTIPLE map views at zoom 5 for full detail
+            # Each view captures vessels in that region at high detail
+            map_views = [
+                {"name": "ASEAN", "url": "https://www.marinetraffic.com/en/ais/home/centerx:115/centery:5/zoom:5", "wait": 15},
+                {"name": "India + Sri Lanka", "url": "https://www.marinetraffic.com/en/ais/home/centerx:78/centery:12/zoom:5", "wait": 12},
+                {"name": "Red Sea + Gulf", "url": "https://www.marinetraffic.com/en/ais/home/centerx:45/centery:20/zoom:5", "wait": 12},
+                {"name": "Australia", "url": "https://www.marinetraffic.com/en/ais/home/centerx:140/centery:-25/zoom:5", "wait": 12},
+            ]
 
-            # Wait for tile data to load
-            await page.wait_for_timeout(18000)
+            for view in map_views:
+                logger.info(f"Navigating to {view['name']} map view...")
+                try:
+                    await page.goto(view["url"], timeout=45000)
+                except Exception as map_err:
+                    logger.warning(f"{view['name']} navigation error: {map_err}, waiting anyway...")
+                await page.wait_for_timeout(view["wait"] * 1000)
+                logger.info(f"  {view['name']}: captured {len(raw_responses)} total tile responses so far")
 
             logger.info(f"Captured {len(raw_responses)} tile responses")
 
