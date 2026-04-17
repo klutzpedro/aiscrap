@@ -175,8 +175,7 @@ export default function VesselsPage() {
                             <thead>
                                 <tr>
                                     <th>Name</th>
-                                    <th>MMSI</th>
-                                    <th>IMO</th>
+                                    <th>MT ID</th>
                                     <th>Type</th>
                                     <th>Flag</th>
                                     <th>Lat</th>
@@ -199,8 +198,7 @@ export default function VesselsPage() {
                                                 <span>{v.name || 'N/A'}</span>
                                             </div>
                                         </td>
-                                        <td className="font-mono text-xs">{v.mmsi}</td>
-                                        <td className="font-mono text-xs text-[#94A3B8]">{v.imo || '-'}</td>
+                                        <td className="font-mono text-xs">{v.ship_id}</td>
                                         <td>
                                             <span className={`inline-block px-2 py-0.5 rounded text-xs whitespace-nowrap ${getTypeBadge(v.vessel_type)}`}>
                                                 {v.vessel_type}
@@ -228,7 +226,7 @@ export default function VesselsPage() {
                                 ))}
                                 {vessels.length === 0 && (
                                     <tr>
-                                        <td colSpan="12" className="text-center text-[#64748B] py-12">
+                                        <td colSpan="11" className="text-center text-[#64748B] py-12">
                                             <Ship className="w-8 h-8 mx-auto mb-2 opacity-30" />
                                             No vessels found
                                         </td>

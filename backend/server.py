@@ -232,6 +232,17 @@ async def scrape_marinetraffic_real():
                                 continue
                             seen_ids.add(ship_id)
 
+                            # Detect SAT-AIS vessels (encoded ship_id)
+                            is_sat_ais = '==' in str(ship_id) or str(row.get('SHIPNAME', '')) == '[SAT-AIS]'
+
+                            # Skip SAT-AIS without name
+                            ship_name = row.get('SHIPNAME', '')
+                            if not ship_name or ship_name == '[SAT-AIS]':
+                                if is_sat_ais:
+                                    continue  # Skip SAT-AIS tanpa info
+                                ship_name = 'Unknown'
+
+                            # Vessel type - gunakan GT_SHIPTYPE + TYPE_NAME untuk akurasi
                             shiptype = str(row.get('SHIPTYPE', ''))
                             gt_shiptype = str(row.get('GT_SHIPTYPE', ''))
                             type_name = row.get('TYPE_NAME', '')
@@ -245,47 +256,72 @@ async def scrape_marinetraffic_real():
                             else:
                                 vessel_type = f"Type {shiptype}" if shiptype else "Unknown"
 
-                            speed_raw = row.get('SPEED', '0')
+                            # Speed (MarineTraffic sends speed * 10)
+                            speed_raw = row.get('SPEED')
                             try:
-                                speed = round(float(speed_raw) / 10.0, 1)
+                                speed = round(float(speed_raw) / 10.0, 1) if speed_raw is not None else 0.0
                             except (ValueError, TypeError):
                                 speed = 0.0
 
+                            # Course
                             course_raw = row.get('COURSE')
                             try:
-                                course = round(float(course_raw), 1) if course_raw else None
+                                course = round(float(course_raw), 1) if course_raw is not None else None
                             except (ValueError, TypeError):
                                 course = None
 
+                            # Heading
                             heading_raw = row.get('HEADING')
                             try:
-                                heading = round(float(heading_raw), 1) if heading_raw else None
+                                heading = round(float(heading_raw), 1) if heading_raw is not None else None
                             except (ValueError, TypeError):
                                 heading = None
 
+                            # Navigation status
                             status_name = row.get('STATUS_NAME', '')
-                            status_code = row.get('STATUS', '')
                             if status_name:
                                 nav_status = status_name
-                            elif status_code:
-                                status_map = {"0": "Under way using engine", "1": "At anchor", "2": "Not under command",
-                                              "3": "Restricted maneuverability", "4": "Constrained by draught",
-                                              "5": "Moored", "8": "Under way sailing"}
-                                nav_status = status_map.get(str(status_code), f"Status {status_code}")
                             else:
-                                nav_status = "N/A"
+                                nav_status = ""
 
-                            # Generate photo & flag URLs
-                            has_photo = ship_id and '==' not in str(ship_id)
-                            photo_url = f"https://www.marinetraffic.com/getAssetDefaultPhoto/?photo_size=800&asset_id={ship_id}&asset_type_id=0" if has_photo else None
+                            # Flag
                             flag_code = row.get('FLAG', '')
-                            flag_url = f"https://flagcdn.com/w80/{flag_code.lower()}.png" if flag_code else None
+                            if flag_code == '--':
+                                flag_code = ''
+                            flag_url = f"https://flagcdn.com/w80/{flag_code.lower()}.png" if flag_code and flag_code != '--' else None
+
+                            # Photo URL (hanya untuk ship_id numerik)
+                            has_photo = ship_id and ship_id.isdigit()
+                            photo_url = f"https://www.marinetraffic.com/getAssetDefaultPhoto/?photo_size=800&asset_id={ship_id}&asset_type_id=0" if has_photo else None
+
+                            # MMSI: tile data TIDAK menyediakan MMSI
+                            # ship_id = MarineTraffic internal ID (BUKAN MMSI)
+                            # mmsi diisi kosong jika tidak tersedia
+                            mmsi_val = str(row.get('MMSI', ''))
+                            if not mmsi_val or mmsi_val == str(ship_id):
+                                mmsi_val = ''  # Tidak ada MMSI di tile data
+
+                            # IMO: tile data TIDAK menyediakan IMO
+                            imo_val = str(row.get('IMO', ''))
+                            if not imo_val:
+                                imo_val = ''
+
+                            # Length & width parsing
+                            length_val = row.get('LENGTH', '')
+                            width_val = row.get('WIDTH', '')
+                            try:
+                                if length_val and int(length_val) == 0:
+                                    length_val = ''
+                                if width_val and int(width_val) == 0:
+                                    width_val = ''
+                            except (ValueError, TypeError):
+                                pass
 
                             vessel = {
                                 "ship_id": ship_id,
-                                "mmsi": str(row.get('MMSI', ship_id)),
-                                "imo": str(row.get('IMO', '')) if row.get('IMO') else None,
-                                "name": row.get('SHIPNAME', 'Unknown'),
+                                "mmsi": mmsi_val,
+                                "imo": imo_val,
+                                "name": ship_name,
                                 "vessel_type": vessel_type,
                                 "flag": flag_code,
                                 "flag_url": flag_url,
@@ -298,10 +334,13 @@ async def scrape_marinetraffic_real():
                                 "nav_status": nav_status,
                                 "destination": row.get('DESTINATION', ''),
                                 "eta": row.get('ETA', ''),
-                                "length": row.get('LENGTH', ''),
-                                "width": row.get('WIDTH', ''),
+                                "length": str(length_val),
+                                "width": str(width_val),
                                 "dwt": row.get('DWT', ''),
                                 "elapsed_min": row.get('ELAPSED', ''),
+                                "is_sat_ais": is_sat_ais,
+                                "mt_ship_type_code": shiptype,
+                                "mt_gt_ship_type_code": gt_shiptype,
                             }
                             vessels.append(vessel)
                         except Exception:
@@ -593,9 +632,10 @@ async def export_vessels_csv(user=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="No vessel data to export")
 
     output = io.StringIO()
-    fieldnames = ["name", "mmsi", "imo", "vessel_type", "flag", "flag_url", "photo_url",
+    fieldnames = ["name", "ship_id", "mmsi", "imo", "vessel_type", "flag", "flag_url", "photo_url",
                   "latitude", "longitude", "speed", "course", "heading", "nav_status",
-                  "destination", "eta", "length", "width", "dwt", "last_updated", "source"]
+                  "destination", "eta", "length", "width", "dwt", "is_sat_ais",
+                  "last_updated", "source"]
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
     writer.writeheader()
     for v in vessels:
