@@ -270,12 +270,14 @@ async def scrape_marinetraffic_real():
                             # Detect SAT-AIS vessels (encoded ship_id)
                             is_sat_ais = '==' in str(ship_id) or str(row.get('SHIPNAME', '')) == '[SAT-AIS]'
 
-                            # Skip SAT-AIS without name
+                            # SAT-AIS tetap dimasukkan, beri label yang benar
                             ship_name = row.get('SHIPNAME', '')
                             if not ship_name or ship_name == '[SAT-AIS]':
                                 if is_sat_ais:
-                                    continue  # Skip SAT-AIS tanpa info
-                                ship_name = 'Unknown'
+                                    type_name_sat = row.get('TYPE_NAME', '')
+                                    ship_name = f"SAT-AIS {type_name_sat}".strip() if type_name_sat else "SAT-AIS Vessel"
+                                else:
+                                    ship_name = 'Unknown'
 
                             # Vessel type - gunakan GT_SHIPTYPE + TYPE_NAME untuk akurasi
                             shiptype = str(row.get('SHIPTYPE', ''))
