@@ -59,7 +59,15 @@ export default function VesselMap({ vessels = [], height = '400px' }) {
                         }}
                     >
                         <Popup>
-                            <div className="text-xs space-y-1">
+                            <div className="text-xs space-y-1" style={{ minWidth: '180px' }}>
+                                {v.ship_id && !v.ship_id.includes('==') && (
+                                    <img
+                                        src={`https://photos.marinetraffic.com/ais/showphoto.aspx?shipid=${v.ship_id}&size=thumb300`}
+                                        alt={v.name}
+                                        className="w-full h-20 object-cover rounded mb-1"
+                                        onError={(e) => { e.target.style.display = 'none'; }}
+                                    />
+                                )}
                                 <p className="font-bold text-sm">{v.name || 'Unknown'}</p>
                                 <p><span className="text-gray-400">Type:</span> {v.vessel_type}</p>
                                 <p><span className="text-gray-400">MMSI:</span> {v.mmsi}</p>
@@ -67,6 +75,7 @@ export default function VesselMap({ vessels = [], height = '400px' }) {
                                 <p><span className="text-gray-400">Speed:</span> {v.speed ?? 'N/A'} kn</p>
                                 <p><span className="text-gray-400">Course:</span> {v.course ?? 'N/A'}&deg;</p>
                                 <p><span className="text-gray-400">Status:</span> {v.nav_status || 'N/A'}</p>
+                                {v.destination && <p><span className="text-gray-400">Dest:</span> {v.destination}</p>}
                             </div>
                         </Popup>
                     </CircleMarker>

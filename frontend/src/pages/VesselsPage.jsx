@@ -188,7 +188,19 @@ export default function VesselsPage() {
                             <tbody>
                                 {vessels.map((v, i) => (
                                     <tr key={v.mmsi || i} data-testid={`vessel-row-${i}`}>
-                                        <td className="font-medium whitespace-nowrap">{v.name || 'N/A'}</td>
+                                        <td className="font-medium whitespace-nowrap">
+                                            <div className="flex items-center gap-2">
+                                                {v.ship_id && !v.ship_id.includes('==') && (
+                                                    <img
+                                                        src={`https://photos.marinetraffic.com/ais/showphoto.aspx?shipid=${v.ship_id}&size=thumb300`}
+                                                        alt=""
+                                                        className="w-8 h-8 rounded object-cover flex-shrink-0"
+                                                        onError={(e) => { e.target.style.display = 'none'; }}
+                                                    />
+                                                )}
+                                                <span>{v.name || 'N/A'}</span>
+                                            </div>
+                                        </td>
                                         <td className="font-mono text-xs">{v.mmsi}</td>
                                         <td className="font-mono text-xs text-[#94A3B8]">{v.imo || '-'}</td>
                                         <td>

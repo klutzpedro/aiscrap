@@ -564,7 +564,7 @@ async def export_vessels_csv(user=Depends(get_current_user)):
 @api_router.get("/vessels/map")
 async def get_vessels_for_map(user=Depends(get_current_user)):
     vessels = await db.vessels.find(
-        {}, {"_id": 0, "name": 1, "mmsi": 1, "vessel_type": 1, "latitude": 1,
+        {}, {"_id": 0, "name": 1, "mmsi": 1, "ship_id": 1, "vessel_type": 1, "latitude": 1,
              "longitude": 1, "speed": 1, "course": 1, "flag": 1, "nav_status": 1,
              "destination": 1, "length": 1, "dwt": 1}
     ).to_list(10000)
