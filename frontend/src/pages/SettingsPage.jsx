@@ -319,9 +319,9 @@ export default function SettingsPage() {
                 <div className="space-y-2 text-sm text-[#94A3B8]">
                     <p>Bot menggunakan <strong className="text-[#10B981]">data real dari MarineTraffic</strong> melalui browser scraping.</p>
                     <p>Data diekstrak langsung dari peta MarineTraffic menggunakan akun Anda.</p>
-                    <p>Coverage: <span className="font-mono text-[#F8FAFC]">ASEAN + Australia/NZ + Samudra Hindia/Sri Lanka + Laut Merah/Teluk Arab</span></p>
-                    <p>Bounding box: <span className="font-mono text-[#F8FAFC]">Lat -47.0 to 32.0, Lon 32.0 to 180.0</span></p>
-                    <p>Waktu ekstraksi: ~2-3 menit per sesi (headless browser, 4 region).</p>
+                    <p>Coverage: <span className="font-mono text-[#F8FAFC]">ASEAN + Australia/NZ</span></p>
+                    <p>Bounding box: <span className="font-mono text-[#F8FAFC]">Lat -47.0 to 25.0, Lon 95.0 to 180.0</span></p>
+                    <p>Waktu ekstraksi: ~40-50 detik per sesi (2 views: ASEAN + Australia).</p>
                 </div>
             </div>
         </div>

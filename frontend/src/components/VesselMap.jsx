@@ -149,27 +149,17 @@ function VesselLayer({ vessels }) {
             if (popupRef.current) map.closePopup(popupRef.current);
 
             const flagUrl = getFlagUrl(closest.flag);
-            const photoUrl = closest.ship_id && !closest.ship_id.includes('==')
-                ? `https://www.marinetraffic.com/getAssetDefaultPhoto/?photo_size=800&asset_id=${closest.ship_id}&asset_type_id=0`
-                : null;
 
             const html = `
-                <div style="font-size:12px;min-width:210px;line-height:1.5;color:#F8FAFC">
-                    ${photoUrl ? `<img src="${photoUrl}" style="width:100%;height:80px;object-fit:cover;border-radius:4px;margin-bottom:6px" onerror="this.style.display='none'" />` : ''}
+                <div style="font-size:12px;min-width:180px;line-height:1.5;color:#F8FAFC">
                     <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
                         ${flagUrl ? `<img src="${flagUrl}" style="width:24px;height:16px;object-fit:cover;border-radius:2px;border:1px solid #333" onerror="this.style.display='none'" />` : ''}
                         <strong style="font-size:13px">${closest.name || 'Unknown'}</strong>
                     </div>
                     <div style="color:#aaa">Type: <span style="color:#F8FAFC">${closest.vessel_type || 'N/A'}</span></div>
-                    <div style="color:#aaa">MMSI: <span style="color:#F8FAFC">${closest.mmsi || 'N/A'}</span></div>
                     <div style="color:#aaa">Flag: <span style="color:#F8FAFC">${closest.flag || 'N/A'}</span></div>
                     <div style="color:#aaa">Speed: <span style="color:#F8FAFC">${closest.speed ?? 'N/A'} kn</span></div>
                     <div style="color:#aaa">Course: <span style="color:#F8FAFC">${closest.course ?? 'N/A'}&deg;</span></div>
-                    <div style="color:#aaa">Heading: <span style="color:#F8FAFC">${closest.heading ?? 'N/A'}&deg;</span></div>
-                    <div style="color:#aaa">Status: <span style="color:#F8FAFC">${closest.nav_status || 'N/A'}</span></div>
-                    ${closest.destination ? `<div style="color:#aaa">Dest: <span style="color:#F8FAFC">${closest.destination}</span></div>` : ''}
-                    ${closest.length ? `<div style="color:#aaa">Size: <span style="color:#F8FAFC">${closest.length}m x ${closest.width || '?'}m</span></div>` : ''}
-                    ${closest.dwt ? `<div style="color:#aaa">DWT: <span style="color:#F8FAFC">${Number(closest.dwt).toLocaleString()} t</span></div>` : ''}
                 </div>
             `;
 
@@ -192,7 +182,7 @@ function MapInit({ vessels }) {
     const map = useMap();
     useEffect(() => {
         if (!vessels || vessels.length === 0) {
-            map.setView([0, 100], 3);
+            map.setView([0, 120], 3);
         }
     }, [vessels, map]);
     return null;
@@ -202,7 +192,7 @@ export default function VesselMap({ vessels = [], height = '400px' }) {
     return (
         <div data-testid="vessel-map" className="rounded-md overflow-hidden border border-[#1E293B]" style={{ height }}>
             <MapContainer
-                center={[0, 100]}
+                center={[0, 120]}
                 zoom={3}
                 style={{ height: '100%', width: '100%' }}
                 attributionControl={true}

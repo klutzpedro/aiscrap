@@ -38,10 +38,10 @@ ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'admin123')
 MT_EMAIL = os.environ.get('MT_EMAIL', '')
 MT_PASSWORD = os.environ.get('MT_PASSWORD', '')
 
-ASEAN_BBOX = {"min_lat": -47.0, "max_lat": 32.0, "min_lon": 32.0, "max_lon": 180.0}
+ASEAN_BBOX = {"min_lat": -47.0, "max_lat": 25.0, "min_lon": 95.0, "max_lon": 180.0}
 
-# Coverage: ASEAN + Australia/NZ + Samudra Hindia/Sri Lanka + Laut Merah/Teluk Arab
-COVERAGE_LABEL = "ASEAN + Australia + Indian Ocean + Red Sea"
+# Coverage: ASEAN + Australia/NZ
+COVERAGE_LABEL = "ASEAN + Australia"
 
 # ASEAN tile coordinates at zoom 5
 ASEAN_TILES_Z5 = [
@@ -224,12 +224,9 @@ async def scrape_marinetraffic_real():
             except Exception as e:
                 logger.warning(f"Login form error: {e}")
 
-            # Step 2: Navigate to MULTIPLE map views at zoom 5 for full detail
-            # Each view captures vessels in that region at high detail
+            # Step 2: Navigate to map views - ASEAN (detail) + Australia
             map_views = [
                 {"name": "ASEAN", "url": "https://www.marinetraffic.com/en/ais/home/centerx:115/centery:5/zoom:5", "wait": 15},
-                {"name": "India + Sri Lanka", "url": "https://www.marinetraffic.com/en/ais/home/centerx:78/centery:12/zoom:5", "wait": 12},
-                {"name": "Red Sea + Gulf", "url": "https://www.marinetraffic.com/en/ais/home/centerx:45/centery:20/zoom:5", "wait": 12},
                 {"name": "Australia", "url": "https://www.marinetraffic.com/en/ais/home/centerx:140/centery:-25/zoom:5", "wait": 12},
             ]
 
@@ -708,11 +705,13 @@ async def export_vessels_csv(user=Depends(get_current_user)):
 
 @api_router.get("/vessels/map")
 async def get_vessels_for_map(user=Depends(get_current_user)):
+    # Hanya kirim field minimal untuk rendering peta (hemat bandwidth)
     vessels = await db.vessels.find(
-        {}, {"_id": 0, "name": 1, "mmsi": 1, "ship_id": 1, "vessel_type": 1, "latitude": 1,
-             "longitude": 1, "speed": 1, "course": 1, "heading": 1, "flag": 1, "nav_status": 1,
-             "destination": 1, "length": 1, "width": 1, "dwt": 1}
+        {}, {"_id": 0, "ship_id": 1, "name": 1, "vessel_type": 1,
+             "latitude": 1, "longitude": 1, "speed": 1,
+             "course": 1, "heading": 1, "flag": 1}
     ).to_list(10000)
+    return {"vessels": vessels}
     return {"vessels": vessels}
 
 
