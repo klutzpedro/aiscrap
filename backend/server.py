@@ -158,51 +158,81 @@ async def scrape_marinetraffic_real():
 
             # Step 1: Login to MarineTraffic
             logger.info("Navigating to MarineTraffic login...")
-            await page.goto('https://www.marinetraffic.com/en/users/login', timeout=30000)
-            await page.wait_for_timeout(5000)
+            try:
+                await page.goto('https://www.marinetraffic.com/en/users/login', timeout=45000)
+            except Exception as nav_err:
+                logger.warning(f"Login page navigation error: {nav_err}")
+                await browser.close()
+                return vessels
+
+            await page.wait_for_timeout(6000)
 
             title = await page.title()
-            if 'Cloudflare' not in title and 'Attention' not in title:
-                # Fill login - Auth0 style (email first, then password)
-                try:
-                    visible_inputs = page.locator('input:visible')
-                    cnt = await visible_inputs.count()
+            logger.info(f"Login page title: {title}")
 
-                    if cnt == 1:
-                        # Email-first flow
-                        await visible_inputs.first.fill(MT_EMAIL)
-                        submit = page.locator('button[type="submit"]:visible, button:has-text("Continue"):visible')
-                        if await submit.count() > 0:
-                            await submit.first.click()
-                            await page.wait_for_timeout(3000)
+            # Jika Cloudflare challenge, tunggu lebih lama
+            if 'Cloudflare' in title or 'Attention' in title or 'challenge' in title.lower():
+                logger.info("Cloudflare challenge detected, waiting 15s...")
+                await page.wait_for_timeout(15000)
+                title = await page.title()
+                if 'Cloudflare' in title:
+                    logger.error("Still blocked by Cloudflare after waiting")
+                    await browser.close()
+                    return vessels
 
-                        pwd = page.locator('input[type="password"]:visible')
-                        if await pwd.count() > 0:
-                            await pwd.first.fill(MT_PASSWORD)
-                            submit2 = page.locator('button[type="submit"]:visible, button:has-text("Continue"):visible, button:has-text("Log in"):visible')
-                            if await submit2.count() > 0:
-                                await submit2.first.click()
-                                await page.wait_for_timeout(5000)
+            # Fill login - Auth0 style (email first, then password)
+            try:
+                visible_inputs = page.locator('input:visible')
+                cnt = await visible_inputs.count()
+                logger.info(f"Found {cnt} visible inputs on login page")
 
-                    elif cnt >= 2:
-                        await visible_inputs.nth(0).fill(MT_EMAIL)
-                        await visible_inputs.nth(1).fill(MT_PASSWORD)
-                        submit = page.locator('button[type="submit"]:visible')
-                        if await submit.count() > 0:
-                            await submit.first.click()
-                            await page.wait_for_timeout(5000)
+                if cnt == 1:
+                    await visible_inputs.first.fill(MT_EMAIL)
+                    submit = page.locator('button[type="submit"]:visible, button:has-text("Continue"):visible')
+                    if await submit.count() > 0:
+                        await submit.first.click()
+                        await page.wait_for_timeout(4000)
 
-                    logger.info(f"After login, URL: {page.url}")
-                except Exception as e:
-                    logger.warning(f"Login form error: {e}")
+                    pwd = page.locator('input[type="password"]:visible')
+                    pwd_wait = 0
+                    while await pwd.count() == 0 and pwd_wait < 10:
+                        await page.wait_for_timeout(1000)
+                        pwd_wait += 1
+                    if await pwd.count() > 0:
+                        await pwd.first.fill(MT_PASSWORD)
+                        submit2 = page.locator('button[type="submit"]:visible, button:has-text("Continue"):visible, button:has-text("Log in"):visible')
+                        if await submit2.count() > 0:
+                            await submit2.first.click()
+                            await page.wait_for_timeout(6000)
+
+                elif cnt >= 2:
+                    await visible_inputs.nth(0).fill(MT_EMAIL)
+                    await visible_inputs.nth(1).fill(MT_PASSWORD)
+                    submit = page.locator('button[type="submit"]:visible')
+                    if await submit.count() > 0:
+                        await submit.first.click()
+                        await page.wait_for_timeout(6000)
+
+                elif cnt == 0:
+                    # Mungkin sudah login (cookies from previous session)
+                    logger.info("No input fields found - may already be logged in")
+
+                logger.info(f"After login, URL: {page.url}")
+            except Exception as e:
+                logger.warning(f"Login form error: {e}")
 
             # Step 2: Navigate to ASEAN map and capture vessel data
             logger.info("Navigating to ASEAN map view...")
-            await page.goto(
-                'https://www.marinetraffic.com/en/ais/home/centerx:115/centery:5/zoom:5',
-                timeout=30000
-            )
-            await page.wait_for_timeout(15000)
+            try:
+                await page.goto(
+                    'https://www.marinetraffic.com/en/ais/home/centerx:115/centery:5/zoom:5',
+                    timeout=45000
+                )
+            except Exception as map_err:
+                logger.warning(f"Map navigation error: {map_err}, waiting anyway...")
+
+            # Wait for tile data to load
+            await page.wait_for_timeout(18000)
 
             logger.info(f"Captured {len(raw_responses)} tile responses")
 
@@ -437,6 +467,8 @@ async def auto_forward_data(vessels_data):
 # ===== SCRAPER STATE =====
 bot_running = False
 
+MAX_RETRIES = 3
+
 # ===== EXTRACTION LOGIC =====
 async def run_extraction():
     start_time = time.time()
@@ -446,11 +478,28 @@ async def run_extraction():
     vessels_data = None
 
     try:
-        logger.info("Starting extraction from MarineTraffic (real data)...")
-        vessels_data = await scrape_marinetraffic_real()
+        # Retry logic - coba sampai MAX_RETRIES kali
+        for attempt in range(1, MAX_RETRIES + 1):
+            logger.info(f"Extraction attempt {attempt}/{MAX_RETRIES}...")
+            try:
+                vessels_data = await scrape_marinetraffic_real()
+                if vessels_data and len(vessels_data) > 0:
+                    logger.info(f"Attempt {attempt} success: {len(vessels_data)} vessels")
+                    break
+                else:
+                    logger.warning(f"Attempt {attempt} returned 0 vessels")
+                    vessels_data = None
+            except Exception as retry_err:
+                logger.warning(f"Attempt {attempt} failed: {retry_err}")
+                vessels_data = None
+
+            if attempt < MAX_RETRIES:
+                wait_sec = attempt * 5
+                logger.info(f"Waiting {wait_sec}s before retry...")
+                await asyncio.sleep(wait_sec)
 
         if not vessels_data or len(vessels_data) == 0:
-            raise Exception("No vessel data retrieved from MarineTraffic. Check credentials or connectivity.")
+            raise Exception(f"No vessel data after {MAX_RETRIES} attempts. MarineTraffic may be temporarily blocking.")
 
         now = datetime.now(timezone.utc).isoformat()
         for v in vessels_data:
