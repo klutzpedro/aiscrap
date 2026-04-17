@@ -311,6 +311,67 @@ async def scrape_marinetraffic_real():
     return vessels
 
 
+# ===== AUTO FORWARD =====
+async def auto_forward_data(vessels_data):
+    """Otomatis kirim data ke endpoint yang dikonfigurasi setelah extraction"""
+    try:
+        config = await db.api_forward_config.find_one({"id": "main"}, {"_id": 0})
+        if not config or not config.get("enabled") or not config.get("endpoint_url"):
+            return
+
+        logger.info(f"Auto-forwarding {len(vessels_data)} vessels to {config['endpoint_url']}...")
+
+        # Bersihkan _id dari vessels
+        clean_vessels = []
+        for v in vessels_data:
+            cv = {k: v for k, v in v.items() if k != '_id'}
+            clean_vessels.append(cv)
+
+        headers = config.get("headers") or {}
+        headers["Content-Type"] = "application/json"
+        method = config.get("method", "POST").upper()
+
+        payload = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "source": "ais_extractor_marinetraffic",
+            "region": "ASEAN",
+            "vessel_count": len(clean_vessels),
+            "vessels": clean_vessels,
+        }
+
+        if method == "POST":
+            resp = requests.post(config["endpoint_url"], json=payload, headers=headers, timeout=30)
+        elif method == "PUT":
+            resp = requests.put(config["endpoint_url"], json=payload, headers=headers, timeout=30)
+        else:
+            logger.warning(f"Unsupported forward method: {method}")
+            return
+
+        # Log hasil forward
+        await db.forward_logs.insert_one({
+            "id": str(uuid.uuid4()),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "endpoint": config["endpoint_url"],
+            "status_code": resp.status_code,
+            "vessels_sent": len(clean_vessels),
+            "success": 200 <= resp.status_code < 300,
+        })
+
+        logger.info(f"Auto-forward complete: {len(clean_vessels)} vessels → {config['endpoint_url']} (status {resp.status_code})")
+
+    except Exception as e:
+        logger.error(f"Auto-forward failed: {e}")
+        await db.forward_logs.insert_one({
+            "id": str(uuid.uuid4()),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "endpoint": config.get("endpoint_url", "unknown") if config else "unknown",
+            "status_code": 0,
+            "vessels_sent": 0,
+            "success": False,
+            "error": str(e),
+        })
+
+
 # ===== SCRAPER STATE =====
 bot_running = False
 
@@ -357,6 +418,9 @@ async def run_extraction():
         }
         await db.extraction_logs.insert_one(log_entry)
         logger.info(f"Extraction complete: {len(vessels_data)} REAL vessels in {duration}s")
+
+        # AUTO FORWARD setelah extraction berhasil
+        await auto_forward_data(vessels_data)
 
     except Exception as e:
         duration = round(time.time() - start_time, 2)
@@ -626,6 +690,13 @@ async def send_data_to_api(user=Depends(get_current_user)):
         return {"message": "Data sent successfully", "status_code": resp.status_code, "vessels_sent": len(vessels)}
     except requests.exceptions.RequestException as e:
         raise HTTPException(status_code=502, detail=f"Failed to send data: {str(e)}")
+
+@api_router.get("/forward/logs")
+async def get_forward_logs(page: int = Query(1, ge=1), limit: int = Query(20, ge=1, le=100), user=Depends(get_current_user)):
+    total = await db.forward_logs.count_documents({})
+    skip = (page - 1) * limit
+    logs = await db.forward_logs.find({}, {"_id": 0}).sort("timestamp", -1).skip(skip).limit(limit).to_list(limit)
+    return {"logs": logs, "total": total, "page": page, "pages": math.ceil(total / limit) if total > 0 else 0}
 
 
 # ===== HEALTH =====

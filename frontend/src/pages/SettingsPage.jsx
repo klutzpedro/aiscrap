@@ -1,12 +1,13 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Settings, Play, Pause, Save, Send, Loader2, Wifi, WifiOff, Clock, Globe } from 'lucide-react';
+import { Settings, Play, Pause, Save, Send, Loader2, Wifi, WifiOff, Clock, Globe, CheckCircle2, XCircle, Zap } from 'lucide-react';
 
 export default function SettingsPage() {
     const { axiosAuth } = useAuth();
     const [botStatus, setBotStatus] = useState(null);
     const [interval, setInterval_] = useState(30);
     const [forwardConfig, setForwardConfig] = useState({ endpoint_url: '', method: 'POST', headers: {}, enabled: false });
+    const [forwardLogs, setForwardLogs] = useState([]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [sending, setSending] = useState(false);
@@ -16,13 +17,15 @@ export default function SettingsPage() {
     const fetchData = useCallback(async () => {
         try {
             const api = axiosAuth();
-            const [botRes, fwdRes] = await Promise.all([
+            const [botRes, fwdRes, fwdLogsRes] = await Promise.all([
                 api.get('/bot/status'),
                 api.get('/forward/config'),
+                api.get('/forward/logs?limit=5'),
             ]);
             setBotStatus(botRes.data);
             setInterval_(botRes.data.interval_minutes || 30);
             setForwardConfig(fwdRes.data || { endpoint_url: '', method: 'POST', headers: {}, enabled: false });
+            setForwardLogs(fwdLogsRes.data.logs || []);
         } catch (err) {
             console.error('Settings fetch error:', err);
         }
@@ -208,6 +211,13 @@ export default function SettingsPage() {
                     API Forwarding
                 </h2>
 
+                <div className="bg-[#050A10] border border-[#00A6FB]/30 rounded-md p-3 flex items-start gap-2">
+                    <Zap className="w-4 h-4 text-[#00A6FB] mt-0.5 flex-shrink-0" />
+                    <p className="text-sm text-[#94A3B8]">
+                        <strong className="text-[#00A6FB]">Auto-Forward:</strong> Jika enabled, data otomatis dikirim ke endpoint setiap kali bot selesai extraction.
+                    </p>
+                </div>
+
                 <div className="space-y-4">
                     <div>
                         <label className="text-xs text-[#64748B] uppercase tracking-[0.15em] font-medium mb-1.5 block">
@@ -270,6 +280,30 @@ export default function SettingsPage() {
                             Send Data Now
                         </button>
                     </div>
+
+                    {/* Forward Logs */}
+                    {forwardLogs.length > 0 && (
+                        <div className="mt-4">
+                            <h3 className="text-xs text-[#64748B] uppercase tracking-[0.15em] font-medium mb-2">Recent Forward Logs</h3>
+                            <div className="space-y-1.5">
+                                {forwardLogs.map((log, i) => (
+                                    <div key={log.id || i} className="flex items-center gap-3 text-xs bg-[#050A10] rounded px-3 py-2">
+                                        {log.success ? (
+                                            <CheckCircle2 className="w-3.5 h-3.5 text-[#10B981] flex-shrink-0" />
+                                        ) : (
+                                            <XCircle className="w-3.5 h-3.5 text-[#F43F5E] flex-shrink-0" />
+                                        )}
+                                        <span className="font-mono text-[#94A3B8]">{new Date(log.timestamp).toLocaleString()}</span>
+                                        <span className="text-[#F8FAFC]">{log.vessels_sent} vessels</span>
+                                        <span className={`font-mono ${log.success ? 'text-[#10B981]' : 'text-[#F43F5E]'}`}>
+                                            {log.status_code || 'ERR'}
+                                        </span>
+                                        {log.error && <span className="text-[#F43F5E] truncate max-w-[200px]">{log.error}</span>}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 
