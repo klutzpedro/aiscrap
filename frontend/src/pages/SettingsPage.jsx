@@ -281,24 +281,27 @@ export default function SettingsPage() {
                         </button>
                     </div>
 
-                    {/* Forward Logs */}
+                    {/* Forward Logs - Compact Slider */}
                     {forwardLogs.length > 0 && (
                         <div className="mt-4">
-                            <h3 className="text-xs text-[#64748B] uppercase tracking-[0.15em] font-medium mb-2">Recent Forward Logs</h3>
-                            <div className="space-y-1.5">
-                                {forwardLogs.map((log, i) => (
-                                    <div key={log.id || i} className="flex items-center gap-3 text-xs bg-[#050A10] rounded px-3 py-2">
+                            <div className="flex items-center justify-between mb-2">
+                                <h3 className="text-xs text-[#64748B] uppercase tracking-[0.15em] font-medium">Recent Forward Logs</h3>
+                                <span className="text-[10px] text-[#64748B]">{forwardLogs.length} records</span>
+                            </div>
+                            <div className="max-h-[180px] overflow-y-auto rounded border border-[#1E293B] divide-y divide-[#1E293B]">
+                                {forwardLogs.slice(0, 5).map((log, i) => (
+                                    <div key={log.id || i} className="flex items-center gap-3 text-xs bg-[#050A10] px-3 py-2">
                                         {log.success ? (
                                             <CheckCircle2 className="w-3.5 h-3.5 text-[#10B981] flex-shrink-0" />
                                         ) : (
                                             <XCircle className="w-3.5 h-3.5 text-[#F43F5E] flex-shrink-0" />
                                         )}
-                                        <span className="font-mono text-[#94A3B8]">{new Date(log.timestamp).toLocaleString()}</span>
+                                        <span className="font-mono text-[#94A3B8] whitespace-nowrap">{new Date(log.timestamp).toLocaleString()}</span>
                                         <span className="text-[#F8FAFC]">{log.vessels_sent} vessels</span>
                                         <span className={`font-mono ${log.success ? 'text-[#10B981]' : 'text-[#F43F5E]'}`}>
                                             {log.status_code || 'ERR'}
                                         </span>
-                                        {log.error && <span className="text-[#F43F5E] truncate max-w-[200px]">{log.error}</span>}
+                                        {log.error && <span className="text-[#F43F5E] truncate max-w-[150px]">{log.error}</span>}
                                     </div>
                                 ))}
                             </div>
