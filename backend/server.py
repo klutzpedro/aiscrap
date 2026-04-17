@@ -329,10 +329,14 @@ async def auto_forward_data(vessels_data):
 
         logger.info(f"Auto-forwarding {len(vessels_data)} vessels to {config['endpoint_url']}...")
 
-        # Bersihkan _id dari vessels
+        # Bersihkan _id dan internal fields, pastikan photo_url & flag_url ada
         clean_vessels = []
-        for v in vessels_data:
-            cv = {k: v for k, v in v.items() if k != '_id'}
+        for vessel in vessels_data:
+            cv = {}
+            for key, val in vessel.items():
+                if key == '_id' or key == 'extraction_id':
+                    continue
+                cv[key] = val
             clean_vessels.append(cv)
 
         headers = config.get("headers") or {}
@@ -347,10 +351,17 @@ async def auto_forward_data(vessels_data):
             "vessels": clean_vessels,
         }
 
+        # Log fields yang dikirim untuk debugging
+        if clean_vessels:
+            sample_fields = list(clean_vessels[0].keys())
+            logger.info(f"Forward payload fields: {sample_fields}")
+            has_photo = sum(1 for v in clean_vessels if v.get('photo_url'))
+            logger.info(f"Vessels with photo_url: {has_photo}/{len(clean_vessels)}")
+
         if method == "POST":
-            resp = requests.post(config["endpoint_url"], json=payload, headers=headers, timeout=30)
+            resp = requests.post(config["endpoint_url"], json=payload, headers=headers, timeout=60)
         elif method == "PUT":
-            resp = requests.put(config["endpoint_url"], json=payload, headers=headers, timeout=30)
+            resp = requests.put(config["endpoint_url"], json=payload, headers=headers, timeout=60)
         else:
             logger.warning(f"Unsupported forward method: {method}")
             return
@@ -363,21 +374,25 @@ async def auto_forward_data(vessels_data):
             "status_code": resp.status_code,
             "vessels_sent": len(clean_vessels),
             "success": 200 <= resp.status_code < 300,
+            "fields_sent": sample_fields if clean_vessels else [],
         })
 
         logger.info(f"Auto-forward complete: {len(clean_vessels)} vessels → {config['endpoint_url']} (status {resp.status_code})")
 
     except Exception as e:
         logger.error(f"Auto-forward failed: {e}")
-        await db.forward_logs.insert_one({
-            "id": str(uuid.uuid4()),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "endpoint": config.get("endpoint_url", "unknown") if config else "unknown",
-            "status_code": 0,
-            "vessels_sent": 0,
-            "success": False,
-            "error": str(e),
-        })
+        try:
+            await db.forward_logs.insert_one({
+                "id": str(uuid.uuid4()),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "endpoint": config.get("endpoint_url", "unknown") if config else "unknown",
+                "status_code": 0,
+                "vessels_sent": 0,
+                "success": False,
+                "error": str(e),
+            })
+        except Exception:
+            pass
 
 
 # ===== SCRAPER STATE =====
@@ -674,9 +689,16 @@ async def send_data_to_api(user=Depends(get_current_user)):
     if not config or not config.get("endpoint_url"):
         raise HTTPException(status_code=400, detail="No forwarding endpoint configured")
 
-    vessels = await db.vessels.find({}, {"_id": 0}).to_list(10000)
+    vessels = await db.vessels.find({}, {"_id": 0, "extraction_id": 0}).to_list(10000)
     if not vessels:
         raise HTTPException(status_code=404, detail="No vessel data to send")
+
+    # Log fields untuk verifikasi
+    if vessels:
+        sample_fields = list(vessels[0].keys())
+        has_photo = sum(1 for v in vessels if v.get('photo_url'))
+        logger.info(f"Manual send - Fields: {sample_fields}")
+        logger.info(f"Manual send - Vessels with photo_url: {has_photo}/{len(vessels)}")
 
     try:
         headers = config.get("headers") or {}
@@ -690,12 +712,18 @@ async def send_data_to_api(user=Depends(get_current_user)):
             "vessels": vessels,
         }
         if method == "POST":
-            resp = requests.post(config["endpoint_url"], json=payload, headers=headers, timeout=30)
+            resp = requests.post(config["endpoint_url"], json=payload, headers=headers, timeout=60)
         elif method == "PUT":
-            resp = requests.put(config["endpoint_url"], json=payload, headers=headers, timeout=30)
+            resp = requests.put(config["endpoint_url"], json=payload, headers=headers, timeout=60)
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported method: {method}")
-        return {"message": "Data sent successfully", "status_code": resp.status_code, "vessels_sent": len(vessels)}
+        return {
+            "message": "Data sent successfully",
+            "status_code": resp.status_code,
+            "vessels_sent": len(vessels),
+            "fields_sent": sample_fields if vessels else [],
+            "vessels_with_photo": has_photo if vessels else 0,
+        }
     except requests.exceptions.RequestException as e:
         raise HTTPException(status_code=502, detail=f"Failed to send data: {str(e)}")
 
