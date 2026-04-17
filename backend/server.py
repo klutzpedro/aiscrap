@@ -38,7 +38,10 @@ ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'admin123')
 MT_EMAIL = os.environ.get('MT_EMAIL', '')
 MT_PASSWORD = os.environ.get('MT_PASSWORD', '')
 
-ASEAN_BBOX = {"min_lat": -11.0, "max_lat": 25.0, "min_lon": 95.0, "max_lon": 150.0}
+ASEAN_BBOX = {"min_lat": -47.0, "max_lat": 32.0, "min_lon": 32.0, "max_lon": 180.0}
+
+# Coverage: ASEAN + Australia/NZ + Samudra Hindia/Sri Lanka + Laut Merah/Teluk Arab
+COVERAGE_LABEL = "ASEAN + Australia + Indian Ocean + Red Sea"
 
 # ASEAN tile coordinates at zoom 5
 ASEAN_TILES_Z5 = [
@@ -221,11 +224,11 @@ async def scrape_marinetraffic_real():
             except Exception as e:
                 logger.warning(f"Login form error: {e}")
 
-            # Step 2: Navigate to ASEAN map and capture vessel data
-            logger.info("Navigating to ASEAN map view...")
+            # Step 2: Navigate to wide-area map view (ASEAN + Australia + Indian Ocean + Red Sea)
+            logger.info("Navigating to wide-area map view...")
             try:
                 await page.goto(
-                    'https://www.marinetraffic.com/en/ais/home/centerx:115/centery:5/zoom:5',
+                    'https://www.marinetraffic.com/en/ais/home/centerx:100/centery:0/zoom:4',
                     timeout=45000
                 )
             except Exception as map_err:
@@ -384,7 +387,7 @@ async def scrape_marinetraffic_real():
     except Exception as e:
         logger.error(f"Playwright scrape error: {e}")
 
-    logger.info(f"Scraped {len(vessels)} vessels in ASEAN region from MarineTraffic (REAL DATA)")
+    logger.info(f"Scraped {len(vessels)} vessels from MarineTraffic (REAL DATA)")
     return vessels
 
 
@@ -415,7 +418,7 @@ async def auto_forward_data(vessels_data):
         payload = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "source": "ais_extractor_marinetraffic",
-            "region": "ASEAN",
+            "region": COVERAGE_LABEL,
             "vessel_count": len(clean_vessels),
             "vessels": clean_vessels,
         }
@@ -1239,7 +1242,7 @@ async def send_data_to_api(user=Depends(get_current_user)):
         payload = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "source": "ais_extractor_marinetraffic",
-            "region": "ASEAN",
+            "region": COVERAGE_LABEL,
             "vessel_count": len(vessels),
             "vessels": vessels,
         }
@@ -1270,7 +1273,7 @@ async def get_forward_logs(page: int = Query(1, ge=1), limit: int = Query(20, ge
 # ===== HEALTH =====
 @api_router.get("/")
 async def root():
-    return {"message": "AIS Data Extractor API - MarineTraffic Real Data", "version": "2.0.0", "region": "ASEAN", "source": "MarineTraffic"}
+    return {"message": "AIS Data Extractor API - MarineTraffic Real Data", "version": "3.0.0", "region": COVERAGE_LABEL, "source": "MarineTraffic"}
 
 
 # ===== STARTUP =====

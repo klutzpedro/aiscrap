@@ -77,7 +77,7 @@ export default function DashboardPage() {
                     </h1>
                     <p className="text-sm text-[#10B981] mt-1 flex items-center gap-1.5">
                         <span className="w-2 h-2 bg-[#10B981] rounded-full animate-pulse" />
-                        Live Data dari MarineTraffic - ASEAN Region
+                        Live Data dari MarineTraffic - ASEAN, Australia, Indian Ocean, Red Sea
                     </p>
                 </div>
                 <button

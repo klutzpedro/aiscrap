@@ -185,7 +185,7 @@ function MapInit({ vessels }) {
     const map = useMap();
     useEffect(() => {
         if (!vessels || vessels.length === 0) {
-            map.setView([5, 115], 4);
+            map.setView([0, 100], 3);
         }
     }, [vessels, map]);
     return null;
@@ -195,8 +195,8 @@ export default function VesselMap({ vessels = [], height = '400px' }) {
     return (
         <div data-testid="vessel-map" className="rounded-md overflow-hidden border border-[#1E293B]" style={{ height }}>
             <MapContainer
-                center={[5, 115]}
-                zoom={4}
+                center={[0, 100]}
+                zoom={3}
                 style={{ height: '100%', width: '100%' }}
                 attributionControl={true}
             >

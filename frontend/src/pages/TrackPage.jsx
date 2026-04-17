@@ -212,7 +212,7 @@ export default function TrackPage() {
                         <Loader2 className="w-8 h-8 text-[#00A6FB] animate-spin" />
                     </div>
                 ) : (
-                    <MapContainer center={[5, 115]} zoom={4} style={{ height: '100%', width: '100%' }}>
+                    <MapContainer center={[0, 100]} zoom={3} style={{ height: '100%', width: '100%' }}>
                         <TileLayer
                             url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
                             attribution='&copy; CARTO &copy; OSM'
