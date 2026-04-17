@@ -275,13 +275,21 @@ async def scrape_marinetraffic_real():
                             else:
                                 nav_status = "N/A"
 
+                            # Generate photo & flag URLs
+                            has_photo = ship_id and '==' not in str(ship_id)
+                            photo_url = f"https://photos.marinetraffic.com/ais/showphoto.aspx?shipid={ship_id}&size=thumb300" if has_photo else None
+                            flag_code = row.get('FLAG', '')
+                            flag_url = f"https://flagcdn.com/w80/{flag_code.lower()}.png" if flag_code else None
+
                             vessel = {
                                 "ship_id": ship_id,
                                 "mmsi": str(row.get('MMSI', ship_id)),
                                 "imo": str(row.get('IMO', '')) if row.get('IMO') else None,
                                 "name": row.get('SHIPNAME', 'Unknown'),
                                 "vessel_type": vessel_type,
-                                "flag": row.get('FLAG', ''),
+                                "flag": flag_code,
+                                "flag_url": flag_url,
+                                "photo_url": photo_url,
                                 "latitude": lat,
                                 "longitude": lon,
                                 "speed": speed,
@@ -545,9 +553,9 @@ async def export_vessels_csv(user=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="No vessel data to export")
 
     output = io.StringIO()
-    fieldnames = ["name", "mmsi", "imo", "vessel_type", "flag", "latitude", "longitude",
-                  "speed", "course", "heading", "nav_status", "destination", "eta",
-                  "length", "width", "dwt", "last_updated", "source"]
+    fieldnames = ["name", "mmsi", "imo", "vessel_type", "flag", "flag_url", "photo_url",
+                  "latitude", "longitude", "speed", "course", "heading", "nav_status",
+                  "destination", "eta", "length", "width", "dwt", "last_updated", "source"]
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
     writer.writeheader()
     for v in vessels:
@@ -565,8 +573,8 @@ async def export_vessels_csv(user=Depends(get_current_user)):
 async def get_vessels_for_map(user=Depends(get_current_user)):
     vessels = await db.vessels.find(
         {}, {"_id": 0, "name": 1, "mmsi": 1, "ship_id": 1, "vessel_type": 1, "latitude": 1,
-             "longitude": 1, "speed": 1, "course": 1, "flag": 1, "nav_status": 1,
-             "destination": 1, "length": 1, "dwt": 1}
+             "longitude": 1, "speed": 1, "course": 1, "heading": 1, "flag": 1, "nav_status": 1,
+             "destination": 1, "length": 1, "width": 1, "dwt": 1}
     ).to_list(10000)
     return {"vessels": vessels}
 

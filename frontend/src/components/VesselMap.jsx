@@ -1,26 +1,187 @@
-import { useEffect } from 'react';
-import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from 'react-leaflet';
+import { useEffect, useRef, useCallback } from 'react';
+import { MapContainer, TileLayer, useMap } from 'react-leaflet';
+import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
 const VESSEL_COLORS = {
-    'Cargo': '#10B981',
-    'General Cargo': '#10B981',
-    'Tanker': '#F43F5E',
-    'Container Ship': '#00A6FB',
-    'Bulk Carrier': '#F59E0B',
-    'Passenger': '#A855F7',
-    'Fishing': '#06B6D4',
-    'High Speed Craft': '#EC4899',
-    'Tug': '#8B5CF6',
-    'Supply Vessel': '#14B8A6',
-    'Special Craft': '#6366F1',
+    'Cargo': '#10B981', 'General Cargo': '#10B981', 'Cargo Vessel': '#10B981',
+    'Cargo - Hazardous A': '#10B981', 'Cargo - Hazardous B': '#10B981',
+    'Cargo - Hazardous C': '#10B981', 'Cargo - Hazardous D': '#10B981',
+    'Tanker': '#F43F5E', 'Crude Oil Tanker': '#F43F5E', 'Chemical Tanker': '#F43F5E',
+    'Product Tanker': '#F43F5E', 'Oil/Chemical Tanker': '#F43F5E',
+    'Container Ship': '#00A6FB', 'Bulk Carrier': '#F59E0B',
+    'Passenger': '#A855F7', 'Fishing': '#06B6D4',
+    'High Speed Craft': '#EC4899', 'Tug': '#8B5CF6', 'Tugs & Special Craft': '#8B5CF6',
+    'Supply Vessel': '#14B8A6', 'Offshore Supply': '#14B8A6',
+    'Special Craft': '#6366F1', 'LNG Carrier': '#F97316', 'LPG Carrier': '#F97316',
+    'Vehicle Carrier': '#84CC16', 'Ro-Ro Cargo': '#84CC16', 'FPSO/FSO': '#D946EF',
 };
 
-function getVesselColor(type) {
-    return VESSEL_COLORS[type] || '#94A3B8';
+function getColor(type) {
+    if (!type) return '#94A3B8';
+    if (VESSEL_COLORS[type]) return VESSEL_COLORS[type];
+    const l = type.toLowerCase();
+    if (l.includes('cargo')) return '#10B981';
+    if (l.includes('tanker')) return '#F43F5E';
+    if (l.includes('container')) return '#00A6FB';
+    if (l.includes('bulk')) return '#F59E0B';
+    if (l.includes('passenger')) return '#A855F7';
+    if (l.includes('fish')) return '#06B6D4';
+    if (l.includes('tug')) return '#8B5CF6';
+    return '#94A3B8';
 }
 
-function MapBounds({ vessels }) {
+function getFlagUrl(code) {
+    if (!code) return null;
+    return `https://flagcdn.com/w40/${code.toLowerCase()}.png`;
+}
+
+// Custom Canvas layer that draws triangles for all vessels
+const VesselCanvasLayer = L.Layer.extend({
+    initialize(vessels) {
+        this._vessels = vessels || [];
+        this._canvas = null;
+    },
+    onAdd(map) {
+        this._map = map;
+        this._canvas = L.DomUtil.create('canvas', 'vessel-canvas');
+        const pane = map.getPane('overlayPane');
+        pane.appendChild(this._canvas);
+        this._canvas.style.position = 'absolute';
+        this._canvas.style.pointerEvents = 'none';
+        map.on('moveend zoomend resize', this._redraw, this);
+        this._redraw();
+    },
+    onRemove(map) {
+        L.DomUtil.remove(this._canvas);
+        map.off('moveend zoomend resize', this._redraw, this);
+    },
+    setVessels(vessels) {
+        this._vessels = vessels || [];
+        if (this._map) this._redraw();
+    },
+    _redraw() {
+        const map = this._map;
+        const size = map.getSize();
+        const topLeft = map.containerPointToLayerPoint([0, 0]);
+        L.DomUtil.setPosition(this._canvas, topLeft);
+        this._canvas.width = size.x;
+        this._canvas.height = size.y;
+        const ctx = this._canvas.getContext('2d');
+        ctx.clearRect(0, 0, size.x, size.y);
+        const zoom = map.getZoom();
+        const triSize = Math.max(4, Math.min(10, zoom - 1));
+
+        for (const v of this._vessels) {
+            const pt = map.latLngToContainerPoint([v.latitude, v.longitude]);
+            if (pt.x < -20 || pt.x > size.x + 20 || pt.y < -20 || pt.y > size.y + 20) continue;
+            const color = getColor(v.vessel_type);
+            const heading = (v.heading ?? v.course ?? 0) * Math.PI / 180;
+            ctx.save();
+            ctx.translate(pt.x, pt.y);
+            ctx.rotate(heading);
+            ctx.beginPath();
+            ctx.moveTo(0, -triSize);
+            ctx.lineTo(triSize * 0.6, triSize * 0.7);
+            ctx.lineTo(0, triSize * 0.3);
+            ctx.lineTo(-triSize * 0.6, triSize * 0.7);
+            ctx.closePath();
+            ctx.fillStyle = color;
+            ctx.globalAlpha = 0.85;
+            ctx.fill();
+            ctx.globalAlpha = 1;
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 0.5;
+            ctx.stroke();
+            ctx.restore();
+        }
+    }
+});
+
+// React component that manages the canvas layer + click popups
+function VesselLayer({ vessels }) {
+    const map = useMap();
+    const layerRef = useRef(null);
+    const popupRef = useRef(null);
+
+    useEffect(() => {
+        if (!layerRef.current) {
+            layerRef.current = new VesselCanvasLayer(vessels);
+            layerRef.current.addTo(map);
+        } else {
+            layerRef.current.setVessels(vessels);
+        }
+        return () => {
+            if (layerRef.current) {
+                map.removeLayer(layerRef.current);
+                layerRef.current = null;
+            }
+        };
+    }, [map, vessels]);
+
+    // Handle click to show popup
+    const handleClick = useCallback((e) => {
+        const clickPt = e.containerPoint;
+        const zoom = map.getZoom();
+        const hitRadius = Math.max(8, 14 - zoom);
+        let closest = null;
+        let closestDist = Infinity;
+
+        for (const v of vessels) {
+            const pt = map.latLngToContainerPoint([v.latitude, v.longitude]);
+            const dx = pt.x - clickPt.x;
+            const dy = pt.y - clickPt.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < hitRadius && dist < closestDist) {
+                closest = v;
+                closestDist = dist;
+            }
+        }
+
+        if (closest) {
+            if (popupRef.current) map.closePopup(popupRef.current);
+
+            const flagUrl = getFlagUrl(closest.flag);
+            const photoUrl = closest.ship_id && !closest.ship_id.includes('==')
+                ? `https://photos.marinetraffic.com/ais/showphoto.aspx?shipid=${closest.ship_id}&size=thumb300`
+                : null;
+
+            const html = `
+                <div style="font-size:12px;min-width:210px;line-height:1.5;color:#F8FAFC">
+                    ${photoUrl ? `<img src="${photoUrl}" style="width:100%;height:80px;object-fit:cover;border-radius:4px;margin-bottom:6px" onerror="this.style.display='none'" />` : ''}
+                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+                        ${flagUrl ? `<img src="${flagUrl}" style="width:24px;height:16px;object-fit:cover;border-radius:2px;border:1px solid #333" onerror="this.style.display='none'" />` : ''}
+                        <strong style="font-size:13px">${closest.name || 'Unknown'}</strong>
+                    </div>
+                    <div style="color:#aaa">Type: <span style="color:#F8FAFC">${closest.vessel_type || 'N/A'}</span></div>
+                    <div style="color:#aaa">MMSI: <span style="color:#F8FAFC">${closest.mmsi || 'N/A'}</span></div>
+                    <div style="color:#aaa">Flag: <span style="color:#F8FAFC">${closest.flag || 'N/A'}</span></div>
+                    <div style="color:#aaa">Speed: <span style="color:#F8FAFC">${closest.speed ?? 'N/A'} kn</span></div>
+                    <div style="color:#aaa">Course: <span style="color:#F8FAFC">${closest.course ?? 'N/A'}&deg;</span></div>
+                    <div style="color:#aaa">Heading: <span style="color:#F8FAFC">${closest.heading ?? 'N/A'}&deg;</span></div>
+                    <div style="color:#aaa">Status: <span style="color:#F8FAFC">${closest.nav_status || 'N/A'}</span></div>
+                    ${closest.destination ? `<div style="color:#aaa">Dest: <span style="color:#F8FAFC">${closest.destination}</span></div>` : ''}
+                    ${closest.length ? `<div style="color:#aaa">Size: <span style="color:#F8FAFC">${closest.length}m x ${closest.width || '?'}m</span></div>` : ''}
+                    ${closest.dwt ? `<div style="color:#aaa">DWT: <span style="color:#F8FAFC">${Number(closest.dwt).toLocaleString()} t</span></div>` : ''}
+                </div>
+            `;
+
+            popupRef.current = L.popup({ className: 'vessel-popup' })
+                .setLatLng([closest.latitude, closest.longitude])
+                .setContent(html)
+                .openOn(map);
+        }
+    }, [map, vessels]);
+
+    useEffect(() => {
+        map.on('click', handleClick);
+        return () => { map.off('click', handleClick); };
+    }, [map, handleClick]);
+
+    return null;
+}
+
+function MapInit({ vessels }) {
     const map = useMap();
     useEffect(() => {
         if (!vessels || vessels.length === 0) {
@@ -45,41 +206,8 @@ export default function VesselMap({ vessels = [], height = '400px' }) {
                     maxZoom={19}
                     subdomains="abcd"
                 />
-                <MapBounds vessels={vessels} />
-                {vessels.map((v, i) => (
-                    <CircleMarker
-                        key={v.mmsi || i}
-                        center={[v.latitude, v.longitude]}
-                        radius={4}
-                        pathOptions={{
-                            color: getVesselColor(v.vessel_type),
-                            fillColor: getVesselColor(v.vessel_type),
-                            fillOpacity: 0.8,
-                            weight: 1,
-                        }}
-                    >
-                        <Popup>
-                            <div className="text-xs space-y-1" style={{ minWidth: '180px' }}>
-                                {v.ship_id && !v.ship_id.includes('==') && (
-                                    <img
-                                        src={`https://photos.marinetraffic.com/ais/showphoto.aspx?shipid=${v.ship_id}&size=thumb300`}
-                                        alt={v.name}
-                                        className="w-full h-20 object-cover rounded mb-1"
-                                        onError={(e) => { e.target.style.display = 'none'; }}
-                                    />
-                                )}
-                                <p className="font-bold text-sm">{v.name || 'Unknown'}</p>
-                                <p><span className="text-gray-400">Type:</span> {v.vessel_type}</p>
-                                <p><span className="text-gray-400">MMSI:</span> {v.mmsi}</p>
-                                <p><span className="text-gray-400">Flag:</span> {v.flag || 'N/A'}</p>
-                                <p><span className="text-gray-400">Speed:</span> {v.speed ?? 'N/A'} kn</p>
-                                <p><span className="text-gray-400">Course:</span> {v.course ?? 'N/A'}&deg;</p>
-                                <p><span className="text-gray-400">Status:</span> {v.nav_status || 'N/A'}</p>
-                                {v.destination && <p><span className="text-gray-400">Dest:</span> {v.destination}</p>}
-                            </div>
-                        </Popup>
-                    </CircleMarker>
-                ))}
+                <MapInit vessels={vessels} />
+                <VesselLayer vessels={vessels} />
             </MapContainer>
         </div>
     );
