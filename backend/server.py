@@ -24,6 +24,9 @@ from pydantic import BaseModel, Field, ConfigDict
 import bcrypt
 import jwt
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from analytics import run_full_analysis, STRATEGIC_ZONES, analyze_zone_traffic
+
+EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 
 # ===== CONFIG =====
 mongo_url = os.environ['MONGO_URL']
@@ -564,6 +567,13 @@ async def run_extraction():
 
         # AUTO FORWARD setelah extraction berhasil
         await auto_forward_data(vessels_data)
+
+        # AUTO ANALYSIS setelah extraction berhasil
+        try:
+            logger.info("Running maritime intelligence analysis...")
+            await run_full_analysis(db, vessels_data)
+        except Exception as analysis_err:
+            logger.error(f"Auto analysis failed: {analysis_err}")
 
     except Exception as e:
         duration = round(time.time() - start_time, 2)
@@ -1133,6 +1143,202 @@ async def ext_get_extractions(limit: int = Query(10, ge=1, le=50)):
     """Log extraction terakhir"""
     logs = await db.extraction_logs.find({}, {"_id": 0}).sort("timestamp", -1).limit(limit).to_list(limit)
     return {"total_shown": len(logs), "extractions": logs}
+
+
+# ====================================================================
+# ANALYTICS API - Maritime Intelligence for TNI AL / C2 Naval
+# Accessible via /api/ext/analytics/... (tanpa login)
+# ====================================================================
+
+@external_router.get("/analytics/latest")
+async def ext_get_latest_analysis():
+    """Hasil analisis terbaru - anomaly detection, zone reports"""
+    analysis = await db.analytics.find_one({}, {"_id": 0}, sort=[("timestamp", -1)])
+    if not analysis:
+        return {"message": "No analysis available. Run extraction first."}
+    return analysis
+
+@external_router.get("/analytics/summary")
+async def ext_get_analysis_summary():
+    """Ringkasan cepat - jumlah anomali per kategori"""
+    analysis = await db.analytics.find_one({}, {"_id": 0, "summary": 1, "timestamp": 1}, sort=[("timestamp", -1)])
+    if not analysis:
+        return {"message": "No analysis available"}
+    return {"timestamp": analysis.get("timestamp"), "summary": analysis.get("summary")}
+
+@external_router.get("/analytics/anomalies")
+async def ext_get_anomalies(
+    severity: Optional[str] = None,
+    anomaly_type: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Daftar anomali terdeteksi - filter by severity/type"""
+    analysis = await db.analytics.find_one({}, {"_id": 0, "anomalies": 1, "timestamp": 1}, sort=[("timestamp", -1)])
+    if not analysis or not analysis.get("anomalies"):
+        return {"anomalies": [], "total": 0}
+    anomalies = analysis["anomalies"]
+    if severity:
+        anomalies = [a for a in anomalies if a.get("severity", "").upper() == severity.upper()]
+    if anomaly_type:
+        anomalies = [a for a in anomalies if a.get("type", "").upper() == anomaly_type.upper()]
+    return {"timestamp": analysis.get("timestamp"), "total": len(anomalies), "anomalies": anomalies[:limit]}
+
+@external_router.get("/analytics/zones")
+async def ext_get_zone_reports():
+    """Laporan semua zona strategis - traffic & foreign vessels"""
+    analysis = await db.analytics.find_one({}, {"_id": 0, "zone_reports": 1, "timestamp": 1}, sort=[("timestamp", -1)])
+    if not analysis:
+        return {"zones": {}}
+    return {"timestamp": analysis.get("timestamp"), "zones": analysis.get("zone_reports", {})}
+
+@external_router.get("/analytics/zones/{zone_id}")
+async def ext_get_zone_detail(zone_id: str):
+    """Detail zona tertentu - Natuna, Selat Malaka, Papua, ALKI 1/2/3"""
+    if zone_id not in STRATEGIC_ZONES:
+        available = list(STRATEGIC_ZONES.keys())
+        raise HTTPException(status_code=404, detail=f"Zone '{zone_id}' not found. Available: {available}")
+    analysis = await db.analytics.find_one({}, {"_id": 0, "zone_reports": 1, "timestamp": 1}, sort=[("timestamp", -1)])
+    if not analysis:
+        return {"message": "No analysis available"}
+    zone_data = analysis.get("zone_reports", {}).get(zone_id)
+    return {"timestamp": analysis.get("timestamp"), "zone": zone_data}
+
+@external_router.get("/analytics/zones-config")
+async def ext_get_zones_config():
+    """Konfigurasi zona strategis yang di-monitor"""
+    zones = {}
+    for zid, z in STRATEGIC_ZONES.items():
+        zones[zid] = {"name": z["name"], "priority": z["priority"], "description": z["description"], "bbox": z["bbox"]}
+    return {"zones": zones}
+
+@external_router.post("/analytics/run")
+async def ext_trigger_analysis():
+    """Trigger analisis manual dari data terkini"""
+    vessels = await db.vessels.find({}, {"_id": 0}).to_list(10000)
+    if not vessels:
+        raise HTTPException(status_code=404, detail="No vessel data. Run extraction first.")
+    result = await run_full_analysis(db, vessels)
+    result.pop("_id", None)
+    return result
+
+@external_router.get("/analytics/ai-report")
+async def ext_get_ai_report():
+    """Laporan AI terbaru"""
+    report = await db.ai_reports.find_one({}, {"_id": 0}, sort=[("timestamp", -1)])
+    if not report:
+        return {"message": "No AI report available. Trigger via POST /api/ext/analytics/ai-report"}
+    return report
+
+@external_router.post("/analytics/ai-report")
+async def ext_generate_ai_report():
+    """Generate laporan intelijen AI menggunakan GPT-4o-mini"""
+    analysis = await db.analytics.find_one({}, {"_id": 0}, sort=[("timestamp", -1)])
+    if not analysis:
+        raise HTTPException(status_code=404, detail="No analysis data. Run extraction & analysis first.")
+
+    # Prepare context for AI
+    summary = analysis.get("summary", {})
+    zones = analysis.get("zone_reports", {})
+    anomalies = analysis.get("anomalies", [])[:30]
+
+    zone_summaries = []
+    for zid, zdata in zones.items():
+        if zdata:
+            zone_summaries.append(
+                f"- {zdata['zone_name']}: {zdata['total_vessels']} kapal "
+                f"({zdata['foreign_vessels']} asing, {zdata['indonesian_vessels']} ID), "
+                f"Priority: {zdata['priority']}"
+            )
+
+    anomaly_texts = []
+    for a in anomalies[:20]:
+        anomaly_texts.append(f"- [{a.get('severity')}] {a.get('type')}: {a.get('detail')}")
+
+    prompt = f"""Kamu adalah analis intelijen maritim TNI AL Indonesia. Buat laporan SITREP (Situation Report) berdasarkan data AIS berikut:
+
+RINGKASAN DATA:
+- Total kapal teranalisis: {summary.get('total_vessels_analyzed', 0)}
+- Total anomali: {summary.get('total_anomalies', 0)}
+- CRITICAL: {summary.get('critical', 0)}, HIGH: {summary.get('high', 0)}, MEDIUM: {summary.get('medium', 0)}
+- Intrusi zona: {summary.get('zone_intrusions', 0)}
+- Speed anomaly: {summary.get('speed_anomalies', 0)}
+- AIS gap (dark vessel): {summary.get('ais_gaps', 0)}
+- Loitering: {summary.get('loitering_detected', 0)}
+- Position jump (spoofing): {summary.get('position_jumps', 0)}
+
+ZONA STRATEGIS:
+{chr(10).join(zone_summaries)}
+
+ANOMALI TERDETEKSI:
+{chr(10).join(anomaly_texts) if anomaly_texts else '- Tidak ada anomali signifikan'}
+
+Buat laporan dalam format:
+1. SITREP HEADER (timestamp, classification)
+2. SITUASI UMUM (overview traffic maritim)
+3. THREAT ASSESSMENT per zona (Natuna, Selat Malaka, Papua, ALKI)
+4. ANOMALI & ALERT (detail temuan mencurigakan)
+5. REKOMENDASI AKSI untuk Komando (apa yang harus dilakukan)
+6. KESIMPULAN & THREAT LEVEL (LOW/MODERATE/HIGH/CRITICAL)
+
+Gunakan bahasa Indonesia formal militer. Singkat, tajam, actionable."""
+
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        llm = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"sitrep-{uuid.uuid4()}", system_message="Kamu adalah analis intelijen maritim TNI AL Indonesia.")
+        response = await llm.send_message(UserMessage(text=prompt))
+
+        report_doc = {
+            "id": str(uuid.uuid4()),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "analysis_id": analysis.get("id"),
+            "report": response,
+            "summary": summary,
+            "model": "gpt-4o-mini",
+        }
+        await db.ai_reports.insert_one(report_doc)
+        report_doc.pop("_id", None)
+        return report_doc
+
+    except Exception as e:
+        logger.error(f"AI report generation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"AI report failed: {str(e)}")
+
+@external_router.get("/analytics/alert-feed")
+async def ext_get_alert_feed(hours: int = Query(24, ge=1, le=720)):
+    """Feed alert terbaru - untuk C2 Naval integration"""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    analyses = await db.analytics.find(
+        {"timestamp": {"$gte": cutoff}},
+        {"_id": 0, "id": 1, "timestamp": 1, "summary": 1, "anomalies": 1}
+    ).sort("timestamp", -1).to_list(50)
+
+    all_alerts = []
+    for a in analyses:
+        for anomaly in a.get("anomalies", []):
+            anomaly["analysis_timestamp"] = a.get("timestamp")
+            all_alerts.append(anomaly)
+
+    # Sort by severity
+    sev = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2}
+    all_alerts.sort(key=lambda x: sev.get(x.get("severity", ""), 3))
+
+    return {
+        "hours": hours,
+        "total_alerts": len(all_alerts),
+        "critical": sum(1 for a in all_alerts if a.get("severity") == "CRITICAL"),
+        "high": sum(1 for a in all_alerts if a.get("severity") == "HIGH"),
+        "alerts": all_alerts[:100],
+    }
+
+@external_router.get("/analytics/history")
+async def ext_get_analysis_history(limit: int = Query(10, ge=1, le=50)):
+    """History analisis sebelumnya"""
+    analyses = await db.analytics.find(
+        {}, {"_id": 0, "id": 1, "timestamp": 1, "summary": 1}
+    ).sort("timestamp", -1).limit(limit).to_list(limit)
+    return {"total": len(analyses), "analyses": analyses}
+
+
 
 
 # ===== BOT ROUTES =====

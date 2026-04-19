@@ -4,6 +4,7 @@ import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import VesselsPage from './pages/VesselsPage';
 import TrackPage from './pages/TrackPage';
+import AnalyticsPage from './pages/AnalyticsPage';
 import LogsPage from './pages/LogsPage';
 import SettingsPage from './pages/SettingsPage';
 import Sidebar from './components/Sidebar';
@@ -48,6 +49,7 @@ function AppRoutes() {
             <Route path="/vessels" element={<ProtectedRoute><AppLayout><VesselsPage /></AppLayout></ProtectedRoute>} />
             <Route path="/track" element={<ProtectedRoute><AppLayout><TrackPage /></AppLayout></ProtectedRoute>} />
             <Route path="/track/:shipId" element={<ProtectedRoute><AppLayout><TrackPage /></AppLayout></ProtectedRoute>} />
+            <Route path="/analytics" element={<ProtectedRoute><AppLayout><AnalyticsPage /></AppLayout></ProtectedRoute>} />
             <Route path="/logs" element={<ProtectedRoute><AppLayout><LogsPage /></AppLayout></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><AppLayout><SettingsPage /></AppLayout></ProtectedRoute>} />
             <Route path="*" element={<Navigate to={user ? "/dashboard" : "/login"} replace />} />
