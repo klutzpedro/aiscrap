@@ -1409,6 +1409,65 @@ async def update_bot_settings(interval_minutes: int = Query(30, ge=1, le=1440), 
         scheduler.add_job(run_extraction, 'interval', minutes=interval_minutes, id='extraction_job', replace_existing=True)
     return {"message": f"Interval updated to {interval_minutes} minutes", "interval_minutes": interval_minutes}
 
+# ===== ANALYTICS SCHEDULER ROUTES =====
+async def run_analytics_job():
+    """Job otomatis: jalankan full analysis dari data vessel terkini."""
+    try:
+        vessels = await db.vessels.find({}, {"_id": 0}).to_list(10000)
+        if not vessels:
+            logger.warning("Analytics job: no vessel data, skip.")
+            return
+        await run_full_analysis(db, vessels)
+        logger.info("Analytics job: completed")
+    except Exception as e:
+        logger.error(f"Analytics job failed: {e}")
+
+async def apply_analytics_schedule(enabled: bool, interval_minutes: int):
+    """Pasang/lepas job analytics di scheduler sesuai konfigurasi."""
+    try:
+        scheduler.remove_job('analytics_job')
+    except Exception:
+        pass
+    if enabled:
+        scheduler.add_job(run_analytics_job, 'interval', minutes=interval_minutes,
+                          id='analytics_job', replace_existing=True)
+        if not scheduler.running:
+            scheduler.start()
+
+@api_router.get("/analytics/schedule")
+async def get_analytics_schedule(user=Depends(get_current_user)):
+    cfg = await db.analytics_schedule.find_one({"id": "main"}, {"_id": 0})
+    if not cfg:
+        cfg = {"id": "main", "enabled": False, "interval_minutes": 60}
+    next_run = None
+    for j in scheduler.get_jobs():
+        if j.id == 'analytics_job' and j.next_run_time:
+            next_run = j.next_run_time.isoformat()
+            break
+    return {**cfg, "next_run": next_run}
+
+@api_router.post("/analytics/schedule")
+async def set_analytics_schedule(payload: dict, user=Depends(get_current_user)):
+    enabled = bool(payload.get("enabled", False))
+    interval = int(payload.get("interval_minutes", 60))
+    if interval < 1 or interval > 10080:  # 1 menit - 7 hari
+        raise HTTPException(status_code=400, detail="interval_minutes harus antara 1 dan 10080")
+    await db.analytics_schedule.update_one(
+        {"id": "main"},
+        {"$set": {"id": "main", "enabled": enabled, "interval_minutes": interval,
+                  "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True
+    )
+    await apply_analytics_schedule(enabled, interval)
+    next_run = None
+    for j in scheduler.get_jobs():
+        if j.id == 'analytics_job' and j.next_run_time:
+            next_run = j.next_run_time.isoformat()
+            break
+    return {"enabled": enabled, "interval_minutes": interval, "next_run": next_run,
+            "message": f"Analytics schedule {'aktif' if enabled else 'nonaktif'} setiap {interval} menit"}
+
+
 @api_router.get("/bot/logs")
 async def get_extraction_logs(page: int = Query(1, ge=1), limit: int = Query(20, ge=1, le=100), user=Depends(get_current_user)):
     total = await db.extraction_logs.count_documents({})
@@ -1521,6 +1580,16 @@ async def startup():
     await db.vessel_history.create_index([("ship_id", 1), ("recorded_at", -1)])
     await db.vessel_history.create_index("recorded_at")
     await db.vessel_history.create_index("name")
+
+    # Restore analytics schedule from DB
+    try:
+        cfg = await db.analytics_schedule.find_one({"id": "main"}, {"_id": 0})
+        if cfg and cfg.get("enabled"):
+            await apply_analytics_schedule(True, int(cfg.get("interval_minutes", 60)))
+            logger.info(f"Analytics schedule restored: every {cfg.get('interval_minutes')} min")
+    except Exception as e:
+        logger.warning(f"Failed to restore analytics schedule: {e}")
+
     logger.info("AIS Data Extractor v2 started - MarineTraffic Real Data Source")
 
 @app.on_event("shutdown")
