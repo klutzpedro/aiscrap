@@ -18,6 +18,7 @@ Aplikasi web yang auto mengekstrak data AIS dari akun MarineTraffic setiap 30 me
 ## What's Been Implemented
 - [x] JWT auth with admin seed (admin / Paparoni83#)
 - [x] Playwright stealth extraction (ASEAN + Australia + Indian Ocean + Red Sea, 7000+ vessels)
+- [x] **Bug fix (Feb 2026)**: Playwright chromium not found due to missing `PLAYWRIGHT_BROWSERS_PATH`. Server.py now auto-detects browser path (`/pw-browsers` or `/root/.cache/ms-playwright`). Verified 7175 vessels scraped in 46s.
 - [x] Vessel detail page + track history
 - [x] APScheduler extraction job (configurable 1-1440 min)
 - [x] CSV export + API forward config with photo_url/flag_url

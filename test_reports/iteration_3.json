@@ -1,0 +1,30 @@
+{
+  "summary": "Backend-only re-check of the MarineTraffic scraper fix (PLAYWRIGHT_BROWSERS_PATH set automatically to /pw-browsers) and of the older endpoints. All 10 pytest tests passed against the public URL. POST /api/bot/extract-now returned 'Extraction completed' in about 46s. The latest extraction log shows status=success, vessels_count=7175, error=None. Bot status shows a recent last_extraction. /api/vessels total=7175. The backend logs contain no 'Executable doesn't exist' or 'playwright install' errors. GET and POST /api/analytics/schedule work: enabling it fills next_run, and an invalid interval returns 400.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "auto-forward (run_extraction post-step)", "issue": "Auto-forward to https://httpbin.org/post fails with SSLEOFError (seen in backend.err.log). Extraction is not affected and this is outside the requested scope."},
+      {"endpoint": "/api/bot/status", "issue": "mt_connected is hardcoded to True, so it says nothing about whether the scraper or browser actually works. The check passes trivially."},
+      {"endpoint": "/api/auth/login", "issue": "The review request says the response has access_token, but it actually returns {token, user}. The frontend may be fine; this is just a doc mismatch."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_scraper_fix_regression.py", "/app/test_reports/pytest/pytest_results_iter3.xml"],
+  "action_items": [
+    "Optional: make the fix robust. If PLAYWRIGHT_BROWSERS_PATH is already set externally to a path with no browsers, the fallback is skipped. Also consider running 'playwright install chromium' at startup or in the deploy step, because /pw-browsers may not persist in production.",
+    "Optional: compute mt_connected from the status of the last extraction log instead of hardcoding True.",
+    "Optional: the auto-forward endpoint (httpbin.org) has an SSL error. Check the forward config."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 1617 lines and should be split into routers (auth, vessels, bot, analytics, forward).",
+    "POST /api/analytics/schedule takes a raw dict instead of a Pydantic model. A non-integer interval_minutes would raise a 500 from int().",
+    "extract-now blocks the HTTP request for about 50s. Consider a background task with status polling."
+  ],
+  "updated_files": ["/app/backend/tests/test_scraper_fix_regression.py"],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "not tested (backend only)"},
+  "test_credentials": "admin / Paparoni83# (from /app/memory/test_credentials.md), works",
+  "seed_data_creation": "None. Tests triggered one real extraction (7175 vessels). The analytics schedule was set to enabled/60 and then restored to its previous state.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: REACT_APP_BACKEND_URL=... pytest /app/backend/tests/test_scraper_fix_regression.py. Extraction takes about 46-90s. Login returns 'token', not 'access_token'. Browsers live in /pw-browsers (chromium-1208, headless_shell-1208/1248)."
+}
