@@ -1,14 +1,21 @@
 from dotenv import load_dotenv
 from pathlib import Path
+import os
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
+
+# Ensure Playwright finds its installed browsers (supervisor may not pass this env var)
+if not os.environ.get('PLAYWRIGHT_BROWSERS_PATH'):
+    for _pw_path in ('/pw-browsers', '/root/.cache/ms-playwright'):
+        if Path(_pw_path).exists():
+            os.environ['PLAYWRIGHT_BROWSERS_PATH'] = _pw_path
+            break
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Query
 from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-import os
 import logging
 import uuid
 import math
